@@ -21,7 +21,14 @@ from fastapi.testclient import TestClient
 from app.config import DATA_DIR
 from app.database import SessionLocal
 from app.integrity import scan_storage_integrity
+from app.legacy_import import (
+    import_legacy_dataset,
+    infer_laterality_from_note_text,
+    parse_legacy_dob,
+    parse_legacy_visit_timestamp,
+)
 from app.main import app
+from app.models import Patient, RetinalImage, StudySession
 
 
 client = TestClient(app)
@@ -92,15 +99,17 @@ def test_database_bootstraps_with_alembic_version() -> None:
     try:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         columns = connection.execute("PRAGMA table_info(retinal_images)").fetchall()
+        session_columns = connection.execute("PRAGMA table_info(study_sessions)").fetchall()
     finally:
         connection.close()
 
-    assert version == ("20260318_0002",)
+    assert version == ("20260318_0003",)
     assert any(column[1] == "width_px" for column in columns)
     assert any(column[1] == "height_px" for column in columns)
     assert any(column[1] == "thumbnail_relpath" for column in columns)
     assert any(column[1] == "thumbnail_width_px" for column in columns)
     assert any(column[1] == "thumbnail_height_px" for column in columns)
+    assert any(column[1] == "legacy_visit_id" for column in session_columns)
 
 
 def test_patient_session_and_image_flow() -> None:
@@ -261,9 +270,129 @@ def test_integrity_scan_reports_missing_and_orphaned_files() -> None:
     assert result.orphaned_thumbnails[0].path.endswith("orphan.png")
 
 
+def build_legacy_fixture(root: Path) -> Path:
+    if root.exists():
+        for path in sorted(root.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                path.rmdir()
+    database_dir = root / "database_dir"
+    image_dir = root / "image_data_dir"
+    text_dir = root / "text_data_dir"
+    database_dir.mkdir(parents=True, exist_ok=True)
+    image_dir.mkdir(parents=True, exist_ok=True)
+    text_dir.mkdir(parents=True, exist_ok=True)
+
+    database_path = database_dir / "patient_database.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute(
+            "CREATE TABLE patients (patient_id INTEGER, firstname TEXT, lastname TEXT, dob TEXT, gender TEXT, archived INTEGER)"
+        )
+        connection.execute(
+            "CREATE TABLE visits (visit_id INTEGER, patient_id INTEGER, d TEXT, image_path TEXT, notes TEXT, archived INTEGER)"
+        )
+        connection.executemany(
+            "INSERT INTO patients VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (1001, "ALICE", "EXAMPLE", "1/1/1900", "F", 0),
+                (1002, "BOB", "ARCHIVED", "2/2/1980", "M", 1),
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO visits VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (2001, 1001, "t:14.18.4-d:10/9/2018", "1001_2001.png", "1001_2001.txt", 0),
+                (2002, 1001, "t:14.19.5-d:10/9/2018", "1001_2002.png", "1001_2002.txt", 0),
+                (2003, 1002, "t:22.17.25-d:20/5/2018", "1002_2003.png", "1002_2003.txt", 1),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    (image_dir / "1001_2001.png").write_bytes(tiny_png_bytes())
+    (image_dir / "1001_2002.png").write_bytes(tiny_png_bytes())
+    (text_dir / "1001_2001.txt").write_text("This is the left eye.", encoding="utf-8")
+    (text_dir / "1001_2002.txt").write_text("Rigth eye", encoding="utf-8")
+    return root
+
+
+def test_legacy_parsers_and_laterality_inference() -> None:
+    assert parse_legacy_dob("6/5/1991").isoformat() == "1991-05-06"
+    assert parse_legacy_visit_timestamp("t:22.17.25-d:20/5/2018").isoformat() == "2018-05-20T22:17:25+00:00"
+    assert infer_laterality_from_note_text("Left eye") == ("left", True)
+    assert infer_laterality_from_note_text("Rigth eye") == ("right", True)
+    assert infer_laterality_from_note_text("No notes yet...") == ("unknown", False)
+
+
+def test_legacy_import_reports_missing_assets_and_is_idempotent() -> None:
+    legacy_root = build_legacy_fixture(DATA_DIR.parent / ".legacy-fixture")
+
+    with SessionLocal() as session:
+        report = import_legacy_dataset(legacy_root, session)
+
+    assert report.patients_created == 2
+    assert report.sessions_created == 3
+    assert report.images_imported == 2
+    assert any(w.warning_type == "missing_image" and w.legacy_visit_id == 2003 for w in report.warnings or [])
+    assert any(w.warning_type == "missing_notes" and w.legacy_visit_id == 2003 for w in report.warnings or [])
+    assert any(w.warning_type == "archived_visit" and w.legacy_visit_id == 2003 for w in report.warnings or [])
+
+    with SessionLocal() as session:
+        patients = list(
+            session.query(Patient)
+            .filter(Patient.legacy_patient_id.is_not(None))
+            .order_by(Patient.legacy_patient_id)
+        )
+        sessions = list(
+            session.query(StudySession)
+            .filter(StudySession.legacy_visit_id.is_not(None))
+            .order_by(StudySession.legacy_visit_id)
+        )
+        images = list(
+            session.query(RetinalImage)
+            .filter(RetinalImage.legacy_visit_id.is_not(None))
+            .order_by(RetinalImage.legacy_visit_id)
+        )
+
+    assert [patient.legacy_patient_id for patient in patients] == [1001, 1002]
+    assert patients[1].archived_at is not None
+    assert [session.legacy_visit_id for session in sessions] == [2001, 2002, 2003]
+    assert sessions[0].status == "completed"
+    assert sessions[1].status == "completed"
+    assert sessions[2].status == "draft"
+    assert "Missing legacy image file 1002_2003.png" in (sessions[2].notes or "")
+    assert [image.legacy_visit_id for image in images] == [2001, 2002]
+    assert images[0].laterality == "left"
+    assert images[1].laterality == "right"
+    assert images[0].legacy_notes_filename == "1001_2001.txt"
+    assert images[1].legacy_image_filename == "1001_2002.png"
+
+    with SessionLocal() as session:
+        rerun = import_legacy_dataset(legacy_root, session)
+
+    assert rerun.patients_reused == 2
+    assert rerun.sessions_reused == 3
+    assert rerun.images_reused == 2
+
+    with SessionLocal() as session:
+        assert session.query(Patient).filter(Patient.legacy_patient_id.is_not(None)).count() == 2
+        assert session.query(StudySession).filter(StudySession.legacy_visit_id.is_not(None)).count() == 3
+        assert session.query(RetinalImage).filter(RetinalImage.legacy_visit_id.is_not(None)).count() == 2
+
+
 def teardown_module() -> None:
     if DATA_DIR.exists():
         for path in sorted(DATA_DIR.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                path.rmdir()
+    legacy_fixture = DATA_DIR.parent / ".legacy-fixture"
+    if legacy_fixture.exists():
+        for path in sorted(legacy_fixture.rglob("*"), reverse=True):
             if path.is_file():
                 path.unlink()
             elif path.is_dir():

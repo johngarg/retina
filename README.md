@@ -65,6 +65,21 @@ uv run python scripts/scan_integrity.py
 
 This reports missing original files, missing thumbnails, and orphaned files under managed storage.
 
+### Legacy import
+
+```bash
+cd apps/api
+uv run python scripts/import_legacy.py ../../retina-racket-full
+```
+
+The importer:
+
+- reads `database_dir/patient_database.db`
+- copies legacy images into managed storage
+- inlines note text when the `.txt` file exists
+- preserves `legacy_patient_id` and `legacy_visit_id`
+- reports missing legacy files and laterality inference warnings as JSON
+
 ### Desktop UI
 
 ```bash

@@ -150,10 +150,17 @@ def create_thumbnail_from_original(image_id: str, storage_relpath: str) -> Store
     )
 
 
-def store_upload(image_id: str, upload: UploadFile) -> StoredUpload:
-    original_path, original_relative = build_original_storage_name(image_id, upload.filename or "upload.bin")
+def store_image_bytes(
+    image_id: str,
+    *,
+    filename: str,
+    raw_bytes: bytes,
+    mime_type_override: str | None = None,
+) -> StoredUpload:
+    original_path, original_relative = build_original_storage_name(image_id, filename or "upload.bin")
     thumbnail_path, thumbnail_relative = build_thumbnail_storage_name(image_id, original_relative)
-    raw_bytes, mime_type, width_px, height_px = read_upload_bytes(upload)
+    detected_mime_type, width_px, height_px = inspect_image_bytes(raw_bytes)
+    mime_type = mime_type_override or detected_mime_type
 
     try:
         file_size, sha256 = write_original_file(original_path, raw_bytes)
@@ -162,7 +169,7 @@ def store_upload(image_id: str, upload: UploadFile) -> StoredUpload:
         remove_storage_artifacts(original_relative, thumbnail_relative)
         raise
 
-    suffix = ensure_suffix(upload.filename or "upload.bin").lstrip(".")
+    suffix = ensure_suffix(filename or "upload.bin").lstrip(".")
     stored_filename = original_path.name
 
     return StoredUpload(
@@ -177,4 +184,24 @@ def store_upload(image_id: str, upload: UploadFile) -> StoredUpload:
         height_px=height_px,
         thumbnail_width_px=thumbnail_width_px,
         thumbnail_height_px=thumbnail_height_px,
+    )
+
+
+def store_file_path(image_id: str, source_path: Path) -> StoredUpload:
+    mime_type = mimetypes.guess_type(source_path.name)[0]
+    return store_image_bytes(
+        image_id,
+        filename=source_path.name,
+        raw_bytes=source_path.read_bytes(),
+        mime_type_override=mime_type,
+    )
+
+
+def store_upload(image_id: str, upload: UploadFile) -> StoredUpload:
+    raw_bytes, mime_type, _, _ = read_upload_bytes(upload)
+    return store_image_bytes(
+        image_id,
+        filename=upload.filename or "upload.bin",
+        raw_bytes=raw_bytes,
+        mime_type_override=mime_type,
     )

@@ -94,6 +94,7 @@ class SessionSummary(BaseModel):
 
     id: str
     patient_id: str
+    legacy_visit_id: int | None = None
     session_date: date
     captured_at: datetime | None
     operator_name: str | None

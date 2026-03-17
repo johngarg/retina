@@ -60,6 +60,7 @@ class StudySession(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     patient_id: Mapped[str] = mapped_column(String(36), ForeignKey("patients.id"), index=True)
+    legacy_visit_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     session_date: Mapped[date] = mapped_column(Date, index=True)
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     operator_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
