@@ -5,22 +5,147 @@ const baseHeaders = {
   Accept: "application/json",
 };
 
+type ApiErrorKind = "network" | "http" | "parse" | "unknown";
+type RequestOptions = RequestInit & {
+  expectJson?: boolean;
+};
+
+type HealthCheckResult = {
+  ok: boolean;
+  error: ApiError | null;
+};
+
+type ErrorPayload = {
+  detail?: string;
+  message?: string;
+};
+
+export class ApiError extends Error {
+  kind: ApiErrorKind;
+  status: number | null;
+  detail: string;
+  retryable: boolean;
+
+  constructor({
+    kind,
+    status = null,
+    detail,
+    retryable,
+  }: {
+    kind: ApiErrorKind;
+    status?: number | null;
+    detail: string;
+    retryable: boolean;
+  }) {
+    super(detail);
+    this.name = "ApiError";
+    this.kind = kind;
+    this.status = status;
+    this.detail = detail;
+    this.retryable = retryable;
+  }
+}
+
 function apiBaseUrl(): string {
   return isTauriRuntime() ? "http://127.0.0.1:8000" : "/api";
 }
 
-async function parse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(data.detail ?? "Request failed");
+function normalizeErrorPayload(data: unknown): string | null {
+  if (!data || typeof data !== "object") {
+    return null;
   }
-  return response.json() as Promise<T>;
+
+  const payload = data as ErrorPayload;
+  if (typeof payload.detail === "string" && payload.detail.trim()) {
+    return payload.detail.trim();
+  }
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return payload.message.trim();
+  }
+  return null;
+}
+
+async function buildHttpError(response: Response): Promise<ApiError> {
+  const data = await response.json().catch(() => null);
+  const detail = normalizeErrorPayload(data) ?? `Request failed with status ${response.status}`;
+  return new ApiError({
+    kind: "http",
+    status: response.status,
+    detail,
+    retryable: response.status >= 500 || response.status === 429,
+  });
+}
+
+function buildRequestError(error: unknown): ApiError {
+  if (error instanceof ApiError) {
+    return error;
+  }
+  if (error instanceof TypeError) {
+    return new ApiError({
+      kind: "network",
+      detail: "Unable to reach the local API.",
+      retryable: true,
+    });
+  }
+  return new ApiError({
+    kind: "unknown",
+    detail: error instanceof Error ? error.message : "Unexpected request failure",
+    retryable: true,
+  });
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { expectJson = true, ...requestInit } = options;
+
+  try {
+    const response = await fetch(`${apiBaseUrl()}${path}`, {
+      headers: requestInit.body instanceof FormData ? baseHeaders : { ...baseHeaders, ...requestInit.headers },
+      ...requestInit,
+    });
+
+    if (!response.ok) {
+      throw await buildHttpError(response);
+    }
+
+    if (!expectJson) {
+      return undefined as T;
+    }
+
+    try {
+      return (await response.json()) as T;
+    } catch {
+      throw new ApiError({
+        kind: "parse",
+        detail: "Received an invalid response from the local API.",
+        retryable: true,
+      });
+    }
+  } catch (error) {
+    throw buildRequestError(error);
+  }
+}
+
+export function describeApiError(error: unknown, action: string): string {
+  const apiError = buildRequestError(error);
+
+  if (apiError.kind === "network") {
+    return `${action}. Check that the local API is running, then retry.`;
+  }
+  if (apiError.status === 404) {
+    return `${action}. The requested record is no longer available.`;
+  }
+  if (apiError.status === 409) {
+    return apiError.detail;
+  }
+  if (apiError.status === 422) {
+    return `${action}. Some required values are missing or invalid.`;
+  }
+  return apiError.detail || action;
 }
 
 export async function fetchPatients(query = ""): Promise<PatientSummary[]> {
   const search = query ? `?q=${encodeURIComponent(query)}` : "";
-  const response = await fetch(`${apiBaseUrl()}/patients${search}`, { headers: baseHeaders });
-  return parse<PatientSummary[]>(response);
+  return request<PatientSummary[]>(`/patients${search}`);
 }
 
 export async function createPatient(input: {
@@ -29,20 +154,17 @@ export async function createPatient(input: {
   date_of_birth: string;
   gender_text: string;
 }): Promise<PatientSummary> {
-  const response = await fetch(`${apiBaseUrl()}/patients`, {
+  return request<PatientSummary>("/patients", {
     method: "POST",
     headers: {
-      ...baseHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(input),
   });
-  return parse<PatientSummary>(response);
 }
 
 export async function fetchPatient(patientId: string): Promise<PatientDetail> {
-  const response = await fetch(`${apiBaseUrl()}/patients/${patientId}`, { headers: baseHeaders });
-  return parse<PatientDetail>(response);
+  return request<PatientDetail>(`/patients/${patientId}`);
 }
 
 export async function createSession(
@@ -53,15 +175,13 @@ export async function createSession(
     notes?: string;
   },
 ): Promise<StudySession> {
-  const response = await fetch(`${apiBaseUrl()}/patients/${patientId}/sessions`, {
+  return request<StudySession>(`/patients/${patientId}/sessions`, {
     method: "POST",
     headers: {
-      ...baseHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(input),
   });
-  return parse<StudySession>(response);
 }
 
 export async function updateSession(
@@ -72,15 +192,13 @@ export async function updateSession(
     notes?: string;
   },
 ): Promise<StudySession> {
-  const response = await fetch(`${apiBaseUrl()}/sessions/${sessionId}`, {
+  return request<StudySession>(`/sessions/${sessionId}`, {
     method: "PATCH",
     headers: {
-      ...baseHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(input),
   });
-  return parse<StudySession>(response);
 }
 
 export async function importImage(
@@ -98,11 +216,11 @@ export async function importImage(
   body.append("notes", input.notes ?? "");
   body.append("file", input.file);
 
-  const response = await fetch(`${apiBaseUrl()}/sessions/${sessionId}/images/import`, {
+  await request<void>(`/sessions/${sessionId}/images/import`, {
     method: "POST",
     body,
+    expectJson: false,
   });
-  await parse(response);
 }
 
 export async function updateImage(
@@ -114,27 +232,36 @@ export async function updateImage(
     captured_at?: string | null;
   },
 ): Promise<RetinalImage> {
-  const response = await fetch(`${apiBaseUrl()}/images/${imageId}`, {
+  return request<RetinalImage>(`/images/${imageId}`, {
     method: "PATCH",
     headers: {
-      ...baseHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(input),
   });
-  return parse<RetinalImage>(response);
 }
 
-export async function fetchHealth(): Promise<boolean> {
+export async function fetchHealth(): Promise<HealthCheckResult> {
   try {
     const response = await fetch(`${apiBaseUrl()}/health`, { headers: baseHeaders });
     if (!response.ok) {
-      return false;
+      return { ok: false, error: await buildHttpError(response) };
     }
-    const data = await response.json();
-    return data.status === "ok";
-  } catch {
-    return false;
+
+    const data = (await response.json()) as { status?: string };
+    if (data.status !== "ok") {
+      return {
+        ok: false,
+        error: new ApiError({
+          kind: "parse",
+          detail: "Local API health response was invalid.",
+          retryable: true,
+        }),
+      };
+    }
+    return { ok: true, error: null };
+  } catch (error) {
+    return { ok: false, error: buildRequestError(error) };
   }
 }
 

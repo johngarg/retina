@@ -1,8 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
 
 import {
+  ApiError,
   createPatient,
   createSession,
+  describeApiError,
   fetchHealth,
   fetchPatient,
   fetchPatients,
@@ -45,6 +47,17 @@ type ImageEditForm = {
 type EyeSide = "left" | "right";
 type EyeUploadForms = Record<EyeSide, UploadForm>;
 type BootState = "checking" | "starting" | "ready" | "error";
+type WorkspaceView = "sessions" | "viewer";
+type LoadStatus = "idle" | "loading" | "ready" | "error";
+type LoadState = {
+  status: LoadStatus;
+  message: string | null;
+};
+type NoticeTone = "error" | "success" | "info";
+type Notice = {
+  tone: NoticeTone;
+  message: string;
+} | null;
 
 const initialPatientForm: PatientForm = {
   first_name: "",
@@ -128,6 +141,10 @@ function otherImages(session: StudySession): RetinalImage[] {
   return session.images.filter((image) => image.laterality !== "left" && image.laterality !== "right");
 }
 
+function isNetworkApiError(error: unknown): boolean {
+  return error instanceof ApiError && error.kind === "network";
+}
+
 function App() {
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
@@ -139,18 +156,49 @@ function App() {
   const [sessionDrafts, setSessionDrafts] = useState<Record<string, SessionForm>>({});
   const [sessionUploads, setSessionUploads] = useState<Record<string, EyeUploadForms>>({});
   const [imageDrafts, setImageDrafts] = useState<Record<string, ImageEditForm>>({});
-  const [isLoadingPatients, setIsLoadingPatients] = useState(true);
-  const [isLoadingPatient, setIsLoadingPatient] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("sessions");
+  const [patientListState, setPatientListState] = useState<LoadState>({
+    status: "loading",
+    message: null,
+  });
+  const [patientDetailState, setPatientDetailState] = useState<LoadState>({
+    status: "idle",
+    message: null,
+  });
+  const [notice, setNotice] = useState<Notice>(null);
   const [bootState, setBootState] = useState<BootState>("checking");
   const [bootMessage, setBootMessage] = useState("Checking backend availability...");
+  const [connectionMessage, setConnectionMessage] = useState("Local API status unknown.");
+
+  function reportRequestFailure(error: unknown, action: string, target: "list" | "detail" | "notice") {
+    const message = describeApiError(error, action);
+    if (target === "list") {
+      setPatientListState({ status: "error", message });
+    } else if (target === "detail") {
+      setPatientDetailState({ status: "error", message });
+    } else {
+      setNotice({ tone: "error", message });
+    }
+
+    if (isNetworkApiError(error)) {
+      setConnectionMessage("Local API unreachable. Retry after the backend is available again.");
+    }
+  }
+
+  function reportRequestSuccess(message?: string) {
+    setConnectionMessage("Local API connected.");
+    if (message) {
+      setNotice({ tone: "success", message });
+    }
+  }
 
   async function refreshPatients(nextQuery = search, preferredPatientId?: string) {
-    setIsLoadingPatients(true);
-    setError(null);
+    setPatientListState({ status: "loading", message: null });
     try {
       const result = await fetchPatients(nextQuery);
       setPatients(result);
+      setPatientListState({ status: "ready", message: null });
+      setConnectionMessage("Local API connected.");
       const nextSelectedId =
         preferredPatientId && result.some((patient) => patient.id === preferredPatientId)
           ? preferredPatientId
@@ -159,17 +207,17 @@ function App() {
             : result[0]?.id ?? null;
       setSelectedPatientId(nextSelectedId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load patients");
-    } finally {
-      setIsLoadingPatients(false);
+      reportRequestFailure(err, "Unable to load patients", "list");
     }
   }
 
   async function refreshPatient(patientId: string, preferredImageId?: string | null) {
-    setIsLoadingPatient(true);
+    setPatientDetailState({ status: "loading", message: null });
     try {
       const detail = await fetchPatient(patientId);
       setSelectedPatient(detail);
+      setPatientDetailState({ status: "ready", message: null });
+      setConnectionMessage("Local API connected.");
       setSessionDrafts((current) => {
         const next = { ...current };
         for (const session of detail.sessions) {
@@ -195,19 +243,20 @@ function App() {
         null;
       setSelectedImage(nextSelectedImage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load patient detail");
-    } finally {
-      setIsLoadingPatient(false);
+      reportRequestFailure(err, "Unable to load patient detail", "detail");
     }
   }
 
   async function bootstrapApp() {
     setBootState("checking");
     setBootMessage("Checking backend availability...");
-    setError(null);
+    setNotice(null);
+    setConnectionMessage("Checking local API availability...");
 
-    if (await fetchHealth()) {
+    const health = await fetchHealth();
+    if (health.ok) {
       setBootState("ready");
+      setConnectionMessage("Local API connected.");
       await refreshPatients();
       return;
     }
@@ -221,23 +270,31 @@ function App() {
       } catch (err) {
         setBootState("error");
         setBootMessage(err instanceof Error ? err.message : "Unable to start the backend process.");
+        setConnectionMessage("Local API startup failed.");
         return;
       }
     } else {
       setBootState("error");
-      setBootMessage("Backend is not running. Start the API on http://127.0.0.1:8000 and retry.");
+      setBootMessage(
+        health.error
+          ? describeApiError(health.error, "Backend is not running")
+          : "Backend is not running. Start the API on http://127.0.0.1:8000 and retry.",
+      );
+      setConnectionMessage("Local API offline.");
       return;
     }
 
-    const isHealthy = await waitForBackendHealth(fetchHealth, 40, 500);
+    const isHealthy = await waitForBackendHealth(async () => (await fetchHealth()).ok, 40, 500);
     if (!isHealthy) {
       setBootState("error");
       setBootMessage("Backend did not become healthy in time. Check the desktop logs and retry.");
+      setConnectionMessage("Local API startup timed out.");
       return;
     }
 
     setBootState("ready");
     setBootMessage("Backend is ready.");
+    setConnectionMessage("Local API connected.");
     await refreshPatients();
   }
 
@@ -252,6 +309,7 @@ function App() {
 
     if (!selectedPatientId) {
       setSelectedPatient(null);
+      setPatientDetailState({ status: "idle", message: null });
       return;
     }
     void refreshPatient(selectedPatientId);
@@ -269,13 +327,15 @@ function App() {
 
   async function onCreatePatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
+    setNotice(null);
     try {
       const created = await createPatient(patientForm);
       setPatientForm(initialPatientForm);
       await refreshPatients(search, created.id);
+      reportRequestSuccess("Patient created.");
+      setWorkspaceView("sessions");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to create patient");
+      reportRequestFailure(err, "Unable to create patient", "notice");
     }
   }
 
@@ -284,14 +344,16 @@ function App() {
     if (!selectedPatientId) {
       return;
     }
-    setError(null);
+    setNotice(null);
     try {
       const created = await createSession(selectedPatientId, sessionForm);
       setSessionForm(initialSessionForm());
       await refreshPatient(selectedPatientId);
       setSessionUploads((current) => ({ ...current, [created.id]: initialEyeUploadForms() }));
+      reportRequestSuccess("Session created.");
+      setWorkspaceView("sessions");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to create session");
+      reportRequestFailure(err, "Unable to create session", "notice");
     }
   }
 
@@ -306,12 +368,13 @@ function App() {
       return;
     }
 
-    setError(null);
+    setNotice(null);
     try {
       await updateSession(sessionId, draft);
       await refreshPatient(selectedPatientId, selectedImage?.id ?? null);
+      reportRequestSuccess("Session details saved.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update session");
+      reportRequestFailure(err, "Unable to update session", "notice");
     }
   }
 
@@ -319,11 +382,11 @@ function App() {
     event.preventDefault();
     const upload = sessionUploads[sessionId]?.[eye] ?? makeUploadForm(eye);
     if (!upload.file || !selectedPatientId) {
-      setError(`Choose a ${eye} eye image before importing`);
+      setNotice({ tone: "error", message: `Choose a ${eye} eye image before importing.` });
       return;
     }
 
-    setError(null);
+    setNotice(null);
     try {
       await importImage(sessionId, { ...upload, laterality: eye, file: upload.file });
       setSessionUploads((current) => ({
@@ -334,8 +397,10 @@ function App() {
         },
       }));
       await refreshPatient(selectedPatientId);
+      reportRequestSuccess(`${eye === "left" ? "Left" : "Right"} eye image imported.`);
+      setWorkspaceView("viewer");
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Unable to import ${eye} eye image`);
+      reportRequestFailure(err, `Unable to import ${eye} eye image`, "notice");
     }
   }
 
@@ -350,7 +415,7 @@ function App() {
       return;
     }
 
-    setError(null);
+    setNotice(null);
     try {
       await updateImage(selectedImage.id, {
         laterality: draft.laterality,
@@ -359,8 +424,9 @@ function App() {
         notes: draft.notes,
       });
       await refreshPatient(selectedPatientId, selectedImage.id);
+      reportRequestSuccess("Image metadata saved.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update image metadata");
+      reportRequestFailure(err, "Unable to update image metadata", "notice");
     }
   }
 
@@ -426,6 +492,10 @@ function App() {
     );
   }
 
+  const connectionOffline =
+    connectionMessage !== "Local API connected." &&
+    connectionMessage !== "Checking local API availability...";
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -456,14 +526,30 @@ function App() {
             }}
           />
           <div className="patient-list">
-            {isLoadingPatients ? <p className="muted">Loading patients...</p> : null}
-            {!isLoadingPatients && patients.length === 0 ? <p className="muted">No patients yet.</p> : null}
+            {patientListState.status === "loading" ? <p className="muted">Loading patients...</p> : null}
+            {patientListState.status === "error" ? (
+              <div className="inline-state">
+                <p>{patientListState.message}</p>
+                <button className="ghost-button" type="button" onClick={() => void refreshPatients(search)}>
+                  Retry patient list
+                </button>
+              </div>
+            ) : null}
+            {patientListState.status === "ready" && patients.length === 0 ? (
+              <div className="inline-state">
+                <p>No patients yet.</p>
+                <span className="muted">Create a patient to begin a local retinal capture workflow.</span>
+              </div>
+            ) : null}
             {patients.map((patient) => (
               <button
                 key={patient.id}
                 type="button"
                 className={`patient-card ${selectedPatientId === patient.id ? "active" : ""}`}
-                onClick={() => setSelectedPatientId(patient.id)}
+                onClick={() => {
+                  setSelectedPatientId(patient.id);
+                  setWorkspaceView("sessions");
+                }}
               >
                 <span className="patient-card-name">{patient.display_name}</span>
                 <span className="patient-card-meta">
@@ -531,11 +617,33 @@ function App() {
                 : "Create a patient on the left or choose one from the list."}
             </p>
           </div>
-          {error ? <div className="error-banner">{error}</div> : null}
+          <div className="workspace-statuses">
+            <div className={`connection-banner ${connectionOffline ? "offline" : ""}`}>
+              {connectionMessage}
+            </div>
+            {notice ? <div className={`notice-banner ${notice.tone}`}>{notice.message}</div> : null}
+          </div>
+        </div>
+
+        <div className="workspace-switcher" role="tablist" aria-label="Workspace panels">
+          <button
+            type="button"
+            className={`ghost-button ${workspaceView === "sessions" ? "active-chip" : ""}`}
+            onClick={() => setWorkspaceView("sessions")}
+          >
+            Session workflow
+          </button>
+          <button
+            type="button"
+            className={`ghost-button ${workspaceView === "viewer" ? "active-chip" : ""}`}
+            onClick={() => setWorkspaceView("viewer")}
+          >
+            Image viewer
+          </button>
         </div>
 
         <div className="workspace-grid">
-          <section className="panel content-panel">
+          <section className={`panel content-panel ${workspaceView === "viewer" ? "mobile-hidden" : ""}`}>
             <div className="panel-header">
               <h2>Sessions</h2>
             </div>
@@ -571,9 +679,24 @@ function App() {
                   </button>
                 </form>
 
-                {isLoadingPatient ? <p className="muted">Loading sessions...</p> : null}
-                {!isLoadingPatient && selectedPatient.sessions.length === 0 ? (
-                  <p className="muted">No sessions yet. Create one to start a bilateral capture session.</p>
+                {patientDetailState.status === "loading" ? <p className="muted">Loading sessions...</p> : null}
+                {patientDetailState.status === "error" ? (
+                  <div className="inline-state">
+                    <p>{patientDetailState.message}</p>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => selectedPatientId && void refreshPatient(selectedPatientId)}
+                    >
+                      Retry patient detail
+                    </button>
+                  </div>
+                ) : null}
+                {patientDetailState.status === "ready" && selectedPatient.sessions.length === 0 ? (
+                  <div className="inline-state">
+                    <p>No sessions yet.</p>
+                    <span className="muted">Create one to start a bilateral capture session.</span>
+                  </div>
                 ) : null}
 
                 <div className="session-list">
@@ -692,7 +815,10 @@ function App() {
                                       key={image.id}
                                       type="button"
                                       className={`image-card ${selectedImage?.id === image.id ? "active" : ""}`}
-                                      onClick={() => setSelectedImage(image)}
+                                      onClick={() => {
+                                        setSelectedImage(image);
+                                        setWorkspaceView("viewer");
+                                      }}
                                     >
                                       <img
                                         src={imageThumbnailUrl(image.id)}
@@ -727,7 +853,10 @@ function App() {
                                   key={image.id}
                                   type="button"
                                   className={`image-card ${selectedImage?.id === image.id ? "active" : ""}`}
-                                  onClick={() => setSelectedImage(image)}
+                                  onClick={() => {
+                                    setSelectedImage(image);
+                                    setWorkspaceView("viewer");
+                                  }}
                                 >
                                   <img
                                     src={imageThumbnailUrl(image.id)}
@@ -756,7 +885,7 @@ function App() {
             )}
           </section>
 
-          <section className="panel viewer-panel">
+          <section className={`panel viewer-panel ${workspaceView === "sessions" ? "mobile-hidden" : ""}`}>
             <div className="panel-header">
               <h2>Image Viewer</h2>
             </div>
