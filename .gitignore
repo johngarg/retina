@@ -1,0 +1,9 @@
+apps/desktop/node_modules/
+apps/desktop/dist/
+apps/api/.venv/
+apps/api/.pytest_cache/
+apps/api/data/
+retina-racket/
+retina-racket-full/
+__pycache__/
+.DS_Store
