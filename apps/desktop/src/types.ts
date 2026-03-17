@@ -24,8 +24,11 @@ export type RetinalImage = {
   file_size_bytes: number;
   width_px: number | null;
   height_px: number | null;
+  thumbnail_width_px: number | null;
+  thumbnail_height_px: number | null;
   notes: string | null;
   legacy_visit_id: number | null;
+  thumbnail_relpath?: string | null;
 };
 
 export type StudySession = {

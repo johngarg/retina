@@ -16,6 +16,7 @@ The repository now contains:
 
 - reverse-engineered legacy documentation
 - a new SQLite-backed FastAPI service
+- thumbnail-backed image import, browsing, and integrity scanning
 - a React UI for patient creation, session creation, image import, browsing, and viewing
 - a Tauri shell scaffold under `apps/desktop/src-tauri`
 
@@ -54,6 +55,15 @@ uv run uvicorn app.main:app --reload
 ```
 
 The API stores development data in `apps/api/data/`.
+
+### Storage integrity scan
+
+```bash
+cd apps/api
+uv run python scripts/scan_integrity.py
+```
+
+This reports missing original files, missing thumbnails, and orphaned files under managed storage.
 
 ### Desktop UI
 

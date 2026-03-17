@@ -12,7 +12,8 @@ from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import DATA_DIR, ensure_app_dirs
-from .database import get_db
+from .database import SessionLocal, get_db
+from .maintenance import backfill_missing_thumbnails
 from .migrations import run_migrations
 from .models import Patient, RetinalImage, StudySession
 from .schemas import (
@@ -25,11 +26,19 @@ from .schemas import (
     SessionCreate,
     SessionSummary,
 )
-from .storage import normalize_name, normalize_upper, remove_storage_path, store_upload
+from .storage import (
+    StorageValidationError,
+    normalize_name,
+    normalize_upper,
+    remove_storage_artifacts,
+    store_upload,
+)
 
 
 ensure_app_dirs()
 run_migrations()
+with SessionLocal() as startup_session:
+    backfill_missing_thumbnails(startup_session)
 
 app = FastAPI(title="Retina API", version="0.1.0")
 
@@ -224,12 +233,15 @@ def import_image(
             original_filename=file.filename,
             stored_filename=stored.stored_filename,
             storage_relpath=stored.storage_relpath,
+            thumbnail_relpath=stored.thumbnail_relpath,
             mime_type=stored.mime_type,
             file_extension=stored.file_extension,
             file_size_bytes=stored.file_size_bytes,
             sha256=stored.sha256,
             width_px=stored.width_px,
             height_px=stored.height_px,
+            thumbnail_width_px=stored.thumbnail_width_px,
+            thumbnail_height_px=stored.thumbnail_height_px,
             notes=form.notes,
         )
         session_obj.status = "completed"
@@ -237,12 +249,17 @@ def import_image(
         db.commit()
         db.refresh(image)
         return image
+    except StorageValidationError as exc:
+        db.rollback()
+        if stored is not None:
+            remove_storage_artifacts(stored.storage_relpath, stored.thumbnail_relpath)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
         db.rollback()
         if stored is not None:
-            remove_storage_path(stored.storage_relpath)
+            remove_storage_artifacts(stored.storage_relpath, stored.thumbnail_relpath)
         raise HTTPException(status_code=500, detail=f"Image import failed: {exc}") from exc
     finally:
         file.file.close()
@@ -260,3 +277,15 @@ def get_image_file(image_id: str, db: Session = Depends(get_db)) -> FileResponse
     if not path.exists():
         raise HTTPException(status_code=404, detail="Stored image file is missing")
     return FileResponse(path, media_type=image.mime_type, filename=image.original_filename)
+
+
+@app.get("/images/{image_id}/thumbnail")
+def get_image_thumbnail(image_id: str, db: Session = Depends(get_db)) -> FileResponse:
+    image = get_image_or_404(db, image_id)
+    if not image.thumbnail_relpath:
+        raise HTTPException(status_code=404, detail="Thumbnail is not available")
+
+    path = DATA_DIR / Path(image.thumbnail_relpath)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Stored thumbnail file is missing")
+    return FileResponse(path, media_type="image/png", filename=f"{image.id}-thumbnail.png")

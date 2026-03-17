@@ -68,6 +68,8 @@ class ImageSummary(BaseModel):
     file_size_bytes: int
     width_px: int | None
     height_px: int | None
+    thumbnail_width_px: int | None
+    thumbnail_height_px: int | None
     notes: str | None
     legacy_visit_id: int | None
 
@@ -94,6 +96,7 @@ class PatientDetail(PatientSummary):
 
 class ImageDetail(ImageSummary):
     storage_relpath: str
+    thumbnail_relpath: str | None
     mime_type: str | None
     file_extension: str | None
     sha256: str

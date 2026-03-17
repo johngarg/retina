@@ -102,3 +102,7 @@ export async function fetchHealth(): Promise<boolean> {
 export function imageFileUrl(imageId: string): string {
   return `${apiBaseUrl()}/images/${imageId}/file`;
 }
+
+export function imageThumbnailUrl(imageId: string): string {
+  return `${apiBaseUrl()}/images/${imageId}/thumbnail`;
+}

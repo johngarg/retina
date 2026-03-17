@@ -1,3 +1,4 @@
+import base64
 import os
 import sqlite3
 from datetime import date
@@ -18,6 +19,8 @@ if TEST_DATA_DIR.exists():
 from fastapi.testclient import TestClient
 
 from app.config import DATA_DIR
+from app.database import SessionLocal
+from app.integrity import scan_storage_integrity
 from app.main import app
 
 
@@ -54,15 +57,7 @@ def create_session(patient_id: str) -> dict:
 
 
 def tiny_png_bytes() -> bytes:
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        b"\x00\x00\x00\rIHDR"
-        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
-        b"\x1f\x15\xc4\x89"
-        b"\x00\x00\x00\rIDATx\x9cc`\x00\x00\x00\x02\x00\x01"
-        b"\xe2!\xbc3"
-        b"\x00\x00\x00\x00IEND\xaeB`\x82"
-    )
+    return base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+c6XQAAAAASUVORK5CYII=")
 
 
 def test_database_bootstraps_with_alembic_version() -> None:
@@ -73,9 +68,12 @@ def test_database_bootstraps_with_alembic_version() -> None:
     finally:
         connection.close()
 
-    assert version == ("20260318_0001",)
+    assert version == ("20260318_0002",)
     assert any(column[1] == "width_px" for column in columns)
     assert any(column[1] == "height_px" for column in columns)
+    assert any(column[1] == "thumbnail_relpath" for column in columns)
+    assert any(column[1] == "thumbnail_width_px" for column in columns)
+    assert any(column[1] == "thumbnail_height_px" for column in columns)
 
 
 def test_patient_session_and_image_flow() -> None:
@@ -99,9 +97,36 @@ def test_patient_session_and_image_flow() -> None:
     assert imported_session["images"][0]["laterality"] == "left"
     assert image["width_px"] == 1
     assert image["height_px"] == 1
+    assert image["thumbnail_width_px"] == 1
+    assert image["thumbnail_height_px"] == 1
 
     stored_file = DATA_DIR / "images"
     assert stored_file.exists()
+
+    response = client.get(f"/images/{image['id']}/thumbnail")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+
+
+def test_invalid_image_import_rolls_back_files() -> None:
+    patient = create_patient()
+    session_obj = create_session(patient["id"])
+
+    response = client.post(
+        f"/sessions/{session_obj['id']}/images/import",
+        data={"laterality": "left", "image_type": "color_fundus"},
+        files={"file": ("not-an-image.txt", BytesIO(b"not a real image"), "text/plain")},
+    )
+    assert response.status_code == 400
+
+    response = client.get(f"/patients/{patient['id']}")
+    assert response.status_code == 200
+    assert response.json()["sessions"][0]["images"] == []
+
+    with SessionLocal() as session:
+        result = scan_storage_integrity(session)
+
+    assert result.ok
 
 
 def test_duplicate_patient_conflict() -> None:
@@ -152,6 +177,35 @@ def test_invalid_image_type_is_rejected() -> None:
     )
     assert response.status_code == 400
     assert "image_type" in response.json()["detail"]
+
+
+def test_integrity_scan_reports_missing_and_orphaned_files() -> None:
+    patient = create_patient()
+    session_obj = create_session(patient["id"])
+
+    response = client.post(
+        f"/sessions/{session_obj['id']}/images/import",
+        data={"laterality": "left", "image_type": "color_fundus"},
+        files={"file": ("left-eye.png", BytesIO(tiny_png_bytes()), "image/png")},
+    )
+    assert response.status_code == 201
+    image = response.json()
+
+    original_path = DATA_DIR / image["storage_relpath"]
+    thumbnail_path = DATA_DIR / image["thumbnail_relpath"]
+    original_path.unlink()
+    orphan_thumbnail = DATA_DIR / "images" / "thumbnail" / "orphan.png"
+    orphan_thumbnail.parent.mkdir(parents=True, exist_ok=True)
+    orphan_thumbnail.write_bytes(thumbnail_path.read_bytes())
+
+    with SessionLocal() as session:
+        result = scan_storage_integrity(session)
+
+    assert not result.ok
+    assert len(result.missing_originals) == 1
+    assert result.missing_originals[0].image_id == image["id"]
+    assert len(result.orphaned_thumbnails) == 1
+    assert result.orphaned_thumbnails[0].path.endswith("orphan.png")
 
 
 def teardown_module() -> None:

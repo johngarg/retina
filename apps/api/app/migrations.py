@@ -10,6 +10,7 @@ from alembic.script import ScriptDirectory
 from .config import DB_PATH
 
 APPLICATION_TABLES = {"patients", "study_sessions", "retinal_images"}
+LEGACY_BOOTSTRAP_REVISION = "20260318_0001"
 COMPATIBILITY_INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS ix_patients_lookup ON patients (normalized_last_name, normalized_first_name, date_of_birth)",
     "CREATE INDEX IF NOT EXISTS ix_study_sessions_patient_date ON study_sessions (patient_id, session_date)",
@@ -28,7 +29,7 @@ def build_config() -> Config:
     return config
 
 
-def bootstrap_unversioned_sqlite_database(head_revision: str) -> bool:
+def bootstrap_unversioned_sqlite_database() -> bool:
     if not DB_PATH.exists():
         return False
 
@@ -60,7 +61,7 @@ def bootstrap_unversioned_sqlite_database(head_revision: str) -> bool:
         connection.execute("DELETE FROM alembic_version")
         connection.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            (head_revision,),
+            (LEGACY_BOOTSTRAP_REVISION,),
         )
         connection.commit()
     return True
@@ -71,5 +72,5 @@ def run_migrations() -> None:
     head_revision = ScriptDirectory.from_config(config).get_current_head()
     if head_revision is None:
         raise RuntimeError("Alembic head revision is not configured")
-    bootstrap_unversioned_sqlite_database(head_revision)
+    bootstrap_unversioned_sqlite_database()
     command.upgrade(config, "head")

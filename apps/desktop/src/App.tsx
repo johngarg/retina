@@ -7,6 +7,7 @@ import {
   fetchPatient,
   fetchPatients,
   imageFileUrl,
+  imageThumbnailUrl,
   importImage,
 } from "./api";
 import { ensureBackendStarted, isTauriRuntime, waitForBackendHealth } from "./tauri";
@@ -481,7 +482,11 @@ function App() {
                               className={`image-card ${selectedImage?.id === image.id ? "active" : ""}`}
                               onClick={() => setSelectedImage(image)}
                             >
-                              <img src={imageFileUrl(image.id)} alt={image.original_filename} />
+                              <img
+                                src={imageThumbnailUrl(image.id)}
+                                alt={image.original_filename}
+                                loading="lazy"
+                              />
                               <div className="image-card-body">
                                 <div className="badge-row">
                                   <span className="badge">{image.laterality}</span>
