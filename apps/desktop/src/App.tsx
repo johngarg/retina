@@ -1,6 +1,15 @@
 import { FormEvent, useEffect, useState } from "react";
 
-import { createPatient, createSession, fetchPatient, fetchPatients, importImage } from "./api";
+import {
+  createPatient,
+  createSession,
+  fetchHealth,
+  fetchPatient,
+  fetchPatients,
+  imageFileUrl,
+  importImage,
+} from "./api";
+import { ensureBackendStarted, isTauriRuntime, waitForBackendHealth } from "./tauri";
 import type { PatientDetail, PatientSummary, RetinalImage } from "./types";
 
 type PatientForm = {
@@ -22,6 +31,8 @@ type UploadForm = {
   notes: string;
   file: File | null;
 };
+
+type BootState = "checking" | "starting" | "ready" | "error";
 
 const initialPatientForm: PatientForm = {
   first_name: "",
@@ -69,6 +80,8 @@ function App() {
   const [isLoadingPatients, setIsLoadingPatients] = useState(true);
   const [isLoadingPatient, setIsLoadingPatient] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bootState, setBootState] = useState<BootState>("checking");
+  const [bootMessage, setBootMessage] = useState("Checking backend availability...");
 
   async function refreshPatients(nextQuery = search, preferredPatientId?: string) {
     setIsLoadingPatients(true);
@@ -111,17 +124,61 @@ function App() {
     }
   }
 
+  async function bootstrapApp() {
+    setBootState("checking");
+    setBootMessage("Checking backend availability...");
+    setError(null);
+
+    if (await fetchHealth()) {
+      setBootState("ready");
+      await refreshPatients();
+      return;
+    }
+
+    if (isTauriRuntime()) {
+      setBootState("starting");
+      setBootMessage("Starting the local API...");
+      try {
+        const result = await ensureBackendStarted();
+        setBootMessage(result.detail);
+      } catch (err) {
+        setBootState("error");
+        setBootMessage(err instanceof Error ? err.message : "Unable to start the backend process.");
+        return;
+      }
+    } else {
+      setBootState("error");
+      setBootMessage("Backend is not running. Start the API on http://127.0.0.1:8000 and retry.");
+      return;
+    }
+
+    const isHealthy = await waitForBackendHealth(fetchHealth, 40, 500);
+    if (!isHealthy) {
+      setBootState("error");
+      setBootMessage("Backend did not become healthy in time. Check the desktop logs and retry.");
+      return;
+    }
+
+    setBootState("ready");
+    setBootMessage("Backend is ready.");
+    await refreshPatients();
+  }
+
   useEffect(() => {
-    void refreshPatients();
+    void bootstrapApp();
   }, []);
 
   useEffect(() => {
+    if (bootState !== "ready") {
+      return;
+    }
+
     if (!selectedPatientId) {
       setSelectedPatient(null);
       return;
     }
     void refreshPatient(selectedPatientId);
-  }, [selectedPatientId]);
+  }, [bootState, selectedPatientId]);
 
   async function onCreatePatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -177,6 +234,30 @@ function App() {
         ...next,
       },
     }));
+  }
+
+  if (bootState !== "ready") {
+    return (
+      <div className="startup-shell">
+        <section className="startup-card">
+          <p className="eyebrow">Milestone 1</p>
+          <h1>Retina Startup</h1>
+          <p>{bootMessage}</p>
+          {bootState === "starting" || bootState === "checking" ? (
+            <div className="startup-spinner" aria-hidden="true" />
+          ) : null}
+          <button className="primary-button" type="button" onClick={() => void bootstrapApp()}>
+            Retry startup
+          </button>
+          {!isTauriRuntime() ? (
+            <p className="muted">
+              Browser mode still expects the API to be started separately. Tauri mode will start it
+              automatically.
+            </p>
+          ) : null}
+        </section>
+      </div>
+    );
   }
 
   return (
@@ -400,7 +481,7 @@ function App() {
                               className={`image-card ${selectedImage?.id === image.id ? "active" : ""}`}
                               onClick={() => setSelectedImage(image)}
                             >
-                              <img src={`/api/images/${image.id}/file`} alt={image.original_filename} />
+                              <img src={imageFileUrl(image.id)} alt={image.original_filename} />
                               <div className="image-card-body">
                                 <div className="badge-row">
                                   <span className="badge">{image.laterality}</span>
@@ -430,7 +511,7 @@ function App() {
               <div className="viewer-stack">
                 <img
                   className="viewer-image"
-                  src={`/api/images/${selectedImage.id}/file`}
+                  src={imageFileUrl(selectedImage.id)}
                   alt={selectedImage.original_filename}
                 />
                 <div className="viewer-meta">

@@ -1,8 +1,13 @@
+import { isTauriRuntime } from "./tauri";
 import type { PatientDetail, PatientSummary, StudySession } from "./types";
 
 const baseHeaders = {
   Accept: "application/json",
 };
+
+function apiBaseUrl(): string {
+  return isTauriRuntime() ? "http://127.0.0.1:8000" : "/api";
+}
 
 async function parse<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -14,7 +19,7 @@ async function parse<T>(response: Response): Promise<T> {
 
 export async function fetchPatients(query = ""): Promise<PatientSummary[]> {
   const search = query ? `?q=${encodeURIComponent(query)}` : "";
-  const response = await fetch(`/api/patients${search}`, { headers: baseHeaders });
+  const response = await fetch(`${apiBaseUrl()}/patients${search}`, { headers: baseHeaders });
   return parse<PatientSummary[]>(response);
 }
 
@@ -24,7 +29,7 @@ export async function createPatient(input: {
   date_of_birth: string;
   gender_text: string;
 }): Promise<PatientSummary> {
-  const response = await fetch("/api/patients", {
+  const response = await fetch(`${apiBaseUrl()}/patients`, {
     method: "POST",
     headers: {
       ...baseHeaders,
@@ -36,7 +41,7 @@ export async function createPatient(input: {
 }
 
 export async function fetchPatient(patientId: string): Promise<PatientDetail> {
-  const response = await fetch(`/api/patients/${patientId}`, { headers: baseHeaders });
+  const response = await fetch(`${apiBaseUrl()}/patients/${patientId}`, { headers: baseHeaders });
   return parse<PatientDetail>(response);
 }
 
@@ -48,7 +53,7 @@ export async function createSession(
     notes?: string;
   },
 ): Promise<StudySession> {
-  const response = await fetch(`/api/patients/${patientId}/sessions`, {
+  const response = await fetch(`${apiBaseUrl()}/patients/${patientId}/sessions`, {
     method: "POST",
     headers: {
       ...baseHeaders,
@@ -74,9 +79,26 @@ export async function importImage(
   body.append("notes", input.notes ?? "");
   body.append("file", input.file);
 
-  const response = await fetch(`/api/sessions/${sessionId}/images/import`, {
+  const response = await fetch(`${apiBaseUrl()}/sessions/${sessionId}/images/import`, {
     method: "POST",
     body,
   });
   await parse(response);
+}
+
+export async function fetchHealth(): Promise<boolean> {
+  try {
+    const response = await fetch(`${apiBaseUrl()}/health`, { headers: baseHeaders });
+    if (!response.ok) {
+      return false;
+    }
+    const data = await response.json();
+    return data.status === "ok";
+  } catch {
+    return false;
+  }
+}
+
+export function imageFileUrl(imageId: string): string {
+  return `${apiBaseUrl()}/images/${imageId}/file`;
 }

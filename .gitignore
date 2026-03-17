@@ -1,5 +1,7 @@
 apps/desktop/node_modules/
 apps/desktop/dist/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/target/
 apps/api/.venv/
 apps/api/.pytest_cache/
 apps/api/data/

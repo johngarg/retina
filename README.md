@@ -65,9 +65,25 @@ npm run dev
 
 The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
 
+### Tauri desktop dev mode
+
+```bash
+cd apps/desktop
+npm install
+npm run tauri dev
+```
+
+In Tauri dev mode, the desktop shell now starts the FastAPI backend automatically from `apps/api/.venv/bin/python`.
+
+### Current runtime note
+
+- browser/Vite mode still expects the API to be started separately
+- Tauri debug/dev mode can now manage backend startup automatically
+- packaged/release backend bundling is still pending Milestone 2
+
 ## Tauri note
 
-`apps/desktop/src-tauri` is scaffolded for the intended desktop shell, but this environment does not currently have `cargo` or `rustc`, so the Tauri build was not verified in this pass.
+Tauri debug/dev mode is now verified. The desktop binary can start the FastAPI backend automatically in debug mode. Release-mode backend bundling is still pending Milestone 2.
 
 ## Next steps
 
