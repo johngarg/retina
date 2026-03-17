@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:backend-sidecar": "../api/.venv/bin/python ../api/scripts/build_sidecar.py",
+    "build:tauri-bundle": "npm run build && npm run build:backend-sidecar",
     "preview": "vite preview",
     "tauri": "tauri"
   },

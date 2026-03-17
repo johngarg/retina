@@ -5,7 +5,7 @@
   "identifier": "com.retina.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build:tauri-bundle",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../dist"
   },
@@ -21,6 +21,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "resources": [
+      "backend/**/*"
+    ]
   }
 }

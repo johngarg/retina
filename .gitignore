@@ -1,9 +1,13 @@
 apps/desktop/node_modules/
 apps/desktop/dist/
+apps/desktop/src-tauri/backend/
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/target/
 apps/api/.venv/
 apps/api/.pytest_cache/
+apps/api/.pyinstaller-build/
+apps/api/.pyinstaller-config/
+apps/api/.pyinstaller-spec/
 apps/api/data/
 retina-racket/
 retina-racket-full/

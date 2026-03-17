@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
+    fs,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -28,32 +29,80 @@ fn shutdown_backend(state: &BackendState) {
     }
 }
 
-#[cfg(debug_assertions)]
-fn resolve_backend_runtime() -> Result<(PathBuf, PathBuf, PathBuf), String> {
-    let api_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../api");
-    let python_path = api_dir.join(".venv/bin/python");
-    let data_dir = api_dir.join("data");
+#[cfg(unix)]
+fn ensure_executable(path: &PathBuf) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
 
-    if !python_path.exists() {
-        return Err(format!(
-            "Expected backend runtime at {}. Run `uv sync --extra dev` in apps/api first.",
-            python_path.display()
-        ));
-    }
-
-    Ok((python_path, api_dir, data_dir))
+    let mut permissions = fs::metadata(path)
+        .map_err(|error| format!("Failed to read backend executable metadata: {error}"))?
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)
+        .map_err(|error| format!("Failed to set backend executable permissions: {error}"))?;
+    Ok(())
 }
 
-#[cfg(not(debug_assertions))]
-fn resolve_backend_runtime() -> Result<(PathBuf, PathBuf, PathBuf), String> {
-    Err(
-        "Packaged backend runtime is not configured yet. Milestone 2 will bundle Python and backend assets."
-            .to_string(),
-    )
+#[cfg(not(unix))]
+fn ensure_executable(_path: &PathBuf) -> Result<(), String> {
+    Ok(())
+}
+
+fn resolve_backend_runtime(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    #[cfg(debug_assertions)]
+    {
+        let api_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../api");
+        let executable_path = api_dir.join(".venv/bin/python");
+        let data_dir = api_dir.join("data");
+
+        if !executable_path.exists() {
+            return Err(format!(
+                "Expected backend runtime at {}. Run `uv sync --extra dev` in apps/api first.",
+                executable_path.display()
+            ));
+        }
+
+        return Ok((executable_path, api_dir, data_dir));
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        let resource_dir = app
+            .path()
+            .resource_dir()
+            .map_err(|error| format!("Failed to resolve resource directory: {error}"))?;
+        let backend_dir = resource_dir.join("backend");
+        let executable_name = if cfg!(target_os = "windows") {
+            "retina-api.exe"
+        } else {
+            "retina-api"
+        };
+        let executable_path = backend_dir.join(executable_name);
+        let data_dir = app
+            .path()
+            .app_local_data_dir()
+            .map_err(|error| format!("Failed to resolve app data directory: {error}"))?
+            .join("backend-data");
+
+        if !executable_path.exists() {
+            return Err(format!(
+                "Bundled backend executable is missing at {}.",
+                executable_path.display()
+            ));
+        }
+
+        fs::create_dir_all(&data_dir)
+            .map_err(|error| format!("Failed to create backend data directory: {error}"))?;
+        ensure_executable(&executable_path)?;
+
+        Ok((executable_path, backend_dir, data_dir))
+    }
 }
 
 #[tauri::command]
-fn ensure_backend_started(state: State<'_, BackendState>) -> Result<BackendStartResult, String> {
+fn ensure_backend_started(
+    app: tauri::AppHandle,
+    state: State<'_, BackendState>,
+) -> Result<BackendStartResult, String> {
     let mut child_guard = state.child.lock().expect("backend state mutex poisoned");
 
     if let Some(child) = child_guard.as_mut() {
@@ -78,14 +127,21 @@ fn ensure_backend_started(state: State<'_, BackendState>) -> Result<BackendStart
         }
     }
 
-    let (python_path, api_dir, data_dir) = resolve_backend_runtime()?;
-    let child = Command::new(python_path)
-        .current_dir(api_dir)
+    let (backend_executable, backend_workdir, data_dir) = resolve_backend_runtime(&app)?;
+    #[cfg(debug_assertions)]
+    let mut command = {
+        let mut command = Command::new(&backend_executable);
+        command.arg("-m").arg("uvicorn").arg("app.main:app");
+        command
+    };
+
+    #[cfg(not(debug_assertions))]
+    let mut command = Command::new(&backend_executable);
+
+    let child = command
+        .current_dir(backend_workdir)
         .env("RETINA_DATA_DIR", data_dir)
         .env("PYTHONUNBUFFERED", "1")
-        .arg("-m")
-        .arg("uvicorn")
-        .arg("app.main:app")
         .arg("--host")
         .arg("127.0.0.1")
         .arg("--port")

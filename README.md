@@ -79,11 +79,26 @@ In Tauri dev mode, the desktop shell now starts the FastAPI backend automaticall
 
 - browser/Vite mode still expects the API to be started separately
 - Tauri debug/dev mode can now manage backend startup automatically
-- packaged/release backend bundling is still pending Milestone 2
+- Tauri release builds now bundle a packaged backend sidecar on macOS
+
+### Tauri release build
+
+```bash
+cd apps/desktop
+npm install
+npm run tauri build
+```
+
+The release build now:
+
+- builds the React frontend
+- packages the Python backend into a standalone executable via PyInstaller
+- bundles that executable into the desktop app resources
+- launches the bundled backend sidecar at runtime on macOS release builds
 
 ## Tauri note
 
-Tauri debug/dev mode is now verified. The desktop binary can start the FastAPI backend automatically in debug mode. Release-mode backend bundling is still pending Milestone 2.
+Tauri debug/dev mode is verified, and macOS release builds now bundle a packaged backend executable. Browser-only mode still expects the API to be started separately.
 
 ## Next steps
 
