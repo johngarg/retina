@@ -7,15 +7,18 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import DATA_DIR, ensure_app_dirs
-from .database import Base, engine, get_db
+from .database import get_db
+from .migrations import run_migrations
 from .models import Patient, RetinalImage, StudySession
 from .schemas import (
     HealthResponse,
     ImageDetail,
+    ImageImportForm,
     PatientCreate,
     PatientDetail,
     PatientSummary,
@@ -26,7 +29,7 @@ from .storage import normalize_name, normalize_upper, remove_storage_path, store
 
 
 ensure_app_dirs()
-Base.metadata.create_all(bind=engine)
+run_migrations()
 
 app = FastAPI(title="Retina API", version="0.1.0")
 
@@ -185,12 +188,9 @@ def import_image(
 ) -> RetinalImage:
     session_obj = get_session_or_404(db, session_id)
     image_id = str(uuid4())
-    normalized_laterality = laterality.strip().lower()
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="Uploaded file is missing a filename")
-    if normalized_laterality not in {"left", "right", "both", "unknown"}:
-        raise HTTPException(status_code=400, detail="Laterality must be left, right, both, or unknown")
 
     parsed_captured_at = None
     if captured_at:
@@ -199,6 +199,18 @@ def import_image(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="captured_at must be ISO 8601") from exc
 
+    try:
+        form = ImageImportForm(
+            laterality=laterality.strip().lower(),
+            image_type=image_type.strip().lower(),
+            notes=notes,
+            captured_at=parsed_captured_at,
+        )
+    except ValidationError as exc:
+        first_error = exc.errors()[0]
+        field_name = ".".join(str(part) for part in first_error["loc"])
+        raise HTTPException(status_code=400, detail=f"{field_name}: {first_error['msg']}") from exc
+
     stored = None
     try:
         stored = store_upload(image_id, file)
@@ -206,9 +218,9 @@ def import_image(
             id=image_id,
             session_id=session_obj.id,
             patient_id=session_obj.patient_id,
-            laterality=normalized_laterality,
-            image_type=image_type.strip().lower(),
-            captured_at=parsed_captured_at,
+            laterality=form.laterality,
+            image_type=form.image_type,
+            captured_at=form.captured_at,
             original_filename=file.filename,
             stored_filename=stored.stored_filename,
             storage_relpath=stored.storage_relpath,
@@ -216,7 +228,9 @@ def import_image(
             file_extension=stored.file_extension,
             file_size_bytes=stored.file_size_bytes,
             sha256=stored.sha256,
-            notes=notes.strip() if notes else None,
+            width_px=stored.width_px,
+            height_px=stored.height_px,
+            notes=form.notes,
         )
         session_obj.status = "completed"
         db.add(image)

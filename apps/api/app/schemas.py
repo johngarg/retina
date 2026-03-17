@@ -1,6 +1,9 @@
 from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .constants import IMAGE_TYPE_VALUES, LATERALITY_VALUES
 
 
 class PatientCreate(BaseModel):
@@ -8,6 +11,16 @@ class PatientCreate(BaseModel):
     last_name: str = Field(min_length=1, max_length=120)
     date_of_birth: date
     gender_text: str | None = Field(default=None, max_length=32)
+
+    @field_validator("first_name", "last_name", "gender_text")
+    @classmethod
+    def strip_string_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("value must not be empty")
+        return normalized
 
 
 class PatientSummary(BaseModel):
@@ -30,6 +43,14 @@ class SessionCreate(BaseModel):
     captured_at: datetime | None = None
     operator_name: str | None = Field(default=None, max_length=120)
     notes: str | None = None
+
+    @field_validator("operator_name", "notes")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.strip().split())
+        return normalized or None
 
 
 class ImageSummary(BaseModel):
@@ -82,3 +103,44 @@ class ImageDetail(ImageSummary):
 
 class HealthResponse(BaseModel):
     status: str
+
+
+LateralityLiteral = Literal["left", "right", "both", "unknown"]
+ImageTypeLiteral = Literal[
+    "color_fundus",
+    "red_free",
+    "fluorescein",
+    "autofluorescence",
+    "oct",
+    "external_photo",
+    "other",
+]
+
+
+class ImageImportForm(BaseModel):
+    laterality: LateralityLiteral
+    image_type: ImageTypeLiteral = "color_fundus"
+    notes: str | None = None
+    captured_at: datetime | None = None
+
+    @field_validator("laterality")
+    @classmethod
+    def validate_laterality(cls, value: str) -> str:
+        if value not in LATERALITY_VALUES:
+            raise ValueError("invalid laterality")
+        return value
+
+    @field_validator("image_type")
+    @classmethod
+    def validate_image_type(cls, value: str) -> str:
+        if value not in IMAGE_TYPE_VALUES:
+            raise ValueError("invalid image_type")
+        return value
+
+    @field_validator("notes")
+    @classmethod
+    def normalize_notes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None

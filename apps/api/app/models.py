@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from .constants import IMAGE_TYPE_VALUES, LATERALITY_VALUES, SESSION_SOURCE_VALUES, SESSION_STATUS_VALUES
 from .database import Base
 
 
@@ -19,6 +20,9 @@ def new_id() -> str:
 
 class Patient(Base):
     __tablename__ = "patients"
+    __table_args__ = (
+        Index("ix_patients_lookup", "normalized_last_name", "normalized_first_name", "date_of_birth"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     legacy_patient_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
@@ -42,6 +46,17 @@ class Patient(Base):
 
 class StudySession(Base):
     __tablename__ = "study_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN {SESSION_STATUS_VALUES}",
+            name="ck_study_sessions_status",
+        ),
+        CheckConstraint(
+            f"source IN {SESSION_SOURCE_VALUES}",
+            name="ck_study_sessions_source",
+        ),
+        Index("ix_study_sessions_patient_date", "patient_id", "session_date"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     patient_id: Mapped[str] = mapped_column(String(36), ForeignKey("patients.id"), index=True)
@@ -64,6 +79,20 @@ class StudySession(Base):
 
 class RetinalImage(Base):
     __tablename__ = "retinal_images"
+    __table_args__ = (
+        CheckConstraint(
+            f"laterality IN {LATERALITY_VALUES}",
+            name="ck_retinal_images_laterality",
+        ),
+        CheckConstraint(
+            f"image_type IN {IMAGE_TYPE_VALUES}",
+            name="ck_retinal_images_image_type",
+        ),
+        CheckConstraint("file_size_bytes >= 0", name="ck_retinal_images_file_size_nonnegative"),
+        CheckConstraint("width_px IS NULL OR width_px >= 1", name="ck_retinal_images_width_positive"),
+        CheckConstraint("height_px IS NULL OR height_px >= 1", name="ck_retinal_images_height_positive"),
+        Index("ix_retinal_images_session_laterality", "session_id", "laterality"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("study_sessions.id"), index=True)

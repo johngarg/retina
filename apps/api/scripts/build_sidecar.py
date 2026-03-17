@@ -51,6 +51,8 @@ def main() -> None:
         str(spec_dir),
         "--paths",
         str(api_dir),
+        "--add-data",
+        f"{api_dir / 'alembic'}{os.pathsep}alembic",
         str(api_dir / "run_server.py"),
     ]
 

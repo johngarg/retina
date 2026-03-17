@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
-import shutil
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import NamedTuple
-from uuid import uuid4
 
 from fastapi import UploadFile
+from PIL import Image, UnidentifiedImageError
 
-from .config import DATA_DIR, IMAGE_ORIGINALS_DIR
+from .config import DATA_DIR
 
 
 class StoredUpload(NamedTuple):
@@ -20,6 +20,8 @@ class StoredUpload(NamedTuple):
     file_extension: str | None
     file_size_bytes: int
     sha256: str
+    width_px: int | None
+    height_px: int | None
 
 
 def normalize_name(value: str) -> str:
@@ -44,12 +46,21 @@ def build_storage_name(image_id: str, original_filename: str) -> tuple[Path, str
     return DATA_DIR / relative, str(relative)
 
 
+def probe_image_dimensions(raw_bytes: bytes) -> tuple[int | None, int | None]:
+    try:
+        with Image.open(BytesIO(raw_bytes)) as image:
+            return image.size
+    except (UnidentifiedImageError, OSError):
+        return None, None
+
+
 def store_upload(image_id: str, upload: UploadFile) -> StoredUpload:
     destination, relative = build_storage_name(image_id, upload.filename or "upload.bin")
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     hasher = hashlib.sha256()
     file_size = 0
+    buffered_chunks: list[bytes] = []
 
     with destination.open("wb") as output:
         while True:
@@ -57,12 +68,14 @@ def store_upload(image_id: str, upload: UploadFile) -> StoredUpload:
             if not chunk:
                 break
             output.write(chunk)
+            buffered_chunks.append(chunk)
             hasher.update(chunk)
             file_size += len(chunk)
 
     mime_type = upload.content_type or mimetypes.guess_type(upload.filename or "")[0]
     suffix = ensure_suffix(upload.filename or "upload.bin").lstrip(".")
     stored_filename = destination.name
+    width_px, height_px = probe_image_dimensions(b"".join(buffered_chunks))
 
     return StoredUpload(
         stored_filename=stored_filename,
@@ -71,6 +84,8 @@ def store_upload(image_id: str, upload: UploadFile) -> StoredUpload:
         file_extension=suffix,
         file_size_bytes=file_size,
         sha256=hasher.hexdigest(),
+        width_px=width_px,
+        height_px=height_px,
     )
 
 
