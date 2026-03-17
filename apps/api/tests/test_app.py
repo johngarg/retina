@@ -56,6 +56,33 @@ def create_session(patient_id: str) -> dict:
     return response.json()
 
 
+def import_test_image(
+    session_id: str,
+    *,
+    laterality: str,
+    image_type: str = "color_fundus",
+    notes: str | None = None,
+    filename: str | None = None,
+) -> dict:
+    response = client.post(
+        f"/sessions/{session_id}/images/import",
+        data={
+            "laterality": laterality,
+            "image_type": image_type,
+            "notes": notes or "",
+        },
+        files={
+            "file": (
+                filename or f"{laterality}-eye.png",
+                BytesIO(tiny_png_bytes()),
+                "image/png",
+            )
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def tiny_png_bytes() -> bytes:
     return base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+c6XQAAAAASUVORK5CYII=")
 
@@ -79,31 +106,57 @@ def test_database_bootstraps_with_alembic_version() -> None:
 def test_patient_session_and_image_flow() -> None:
     patient = create_patient()
     session_obj = create_session(patient["id"])
-
-    response = client.post(
-        f"/sessions/{session_obj['id']}/images/import",
-        data={"laterality": "left", "image_type": "color_fundus", "notes": "Baseline left eye"},
-        files={"file": ("left-eye.png", BytesIO(tiny_png_bytes()), "image/png")},
+    left_image = import_test_image(
+        session_obj["id"],
+        laterality="left",
+        notes="Baseline left eye",
     )
-    assert response.status_code == 201
-    image = response.json()
+    right_image = import_test_image(
+        session_obj["id"],
+        laterality="right",
+        image_type="red_free",
+        notes="Baseline right eye",
+    )
+
+    response = client.patch(
+        f"/sessions/{session_obj['id']}",
+        json={
+            "operator_name": "Operator Two",
+            "notes": "Bilateral baseline session",
+        },
+    )
+    assert response.status_code == 200
+
+    response = client.patch(
+        f"/images/{right_image['id']}",
+        json={
+            "image_type": "color_fundus",
+            "notes": "Updated right eye note",
+        },
+    )
+    assert response.status_code == 200
+    updated_right_image = response.json()
 
     response = client.get(f"/patients/{patient['id']}")
     assert response.status_code == 200
     body = response.json()
     assert len(body["sessions"]) == 1
     imported_session = next(session for session in body["sessions"] if session["id"] == session_obj["id"])
-    assert len(imported_session["images"]) == 1
-    assert imported_session["images"][0]["laterality"] == "left"
-    assert image["width_px"] == 1
-    assert image["height_px"] == 1
-    assert image["thumbnail_width_px"] == 1
-    assert image["thumbnail_height_px"] == 1
+    assert imported_session["notes"] == "Bilateral baseline session"
+    assert imported_session["operator_name"] == "Operator Two"
+    assert len(imported_session["images"]) == 2
+    assert {image["laterality"] for image in imported_session["images"]} == {"left", "right"}
+    assert left_image["width_px"] == 1
+    assert left_image["height_px"] == 1
+    assert left_image["thumbnail_width_px"] == 1
+    assert left_image["thumbnail_height_px"] == 1
+    assert updated_right_image["image_type"] == "color_fundus"
+    assert updated_right_image["notes"] == "Updated right eye note"
 
     stored_file = DATA_DIR / "images"
     assert stored_file.exists()
 
-    response = client.get(f"/images/{image['id']}/thumbnail")
+    response = client.get(f"/images/{left_image['id']}/thumbnail")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
 

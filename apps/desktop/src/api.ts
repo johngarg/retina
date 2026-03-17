@@ -1,5 +1,5 @@
 import { isTauriRuntime } from "./tauri";
-import type { PatientDetail, PatientSummary, StudySession } from "./types";
+import type { PatientDetail, PatientSummary, RetinalImage, StudySession } from "./types";
 
 const baseHeaders = {
   Accept: "application/json",
@@ -64,6 +64,25 @@ export async function createSession(
   return parse<StudySession>(response);
 }
 
+export async function updateSession(
+  sessionId: string,
+  input: {
+    session_date: string;
+    operator_name?: string;
+    notes?: string;
+  },
+): Promise<StudySession> {
+  const response = await fetch(`${apiBaseUrl()}/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: {
+      ...baseHeaders,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  return parse<StudySession>(response);
+}
+
 export async function importImage(
   sessionId: string,
   input: {
@@ -84,6 +103,26 @@ export async function importImage(
     body,
   });
   await parse(response);
+}
+
+export async function updateImage(
+  imageId: string,
+  input: {
+    laterality: string;
+    image_type: string;
+    notes?: string;
+    captured_at?: string | null;
+  },
+): Promise<RetinalImage> {
+  const response = await fetch(`${apiBaseUrl()}/images/${imageId}`, {
+    method: "PATCH",
+    headers: {
+      ...baseHeaders,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  return parse<RetinalImage>(response);
 }
 
 export async function fetchHealth(): Promise<boolean> {

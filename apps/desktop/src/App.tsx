@@ -9,9 +9,11 @@ import {
   imageFileUrl,
   imageThumbnailUrl,
   importImage,
+  updateImage,
+  updateSession,
 } from "./api";
 import { ensureBackendStarted, isTauriRuntime, waitForBackendHealth } from "./tauri";
-import type { PatientDetail, PatientSummary, RetinalImage } from "./types";
+import type { PatientDetail, PatientSummary, RetinalImage, StudySession } from "./types";
 
 type PatientForm = {
   first_name: string;
@@ -33,6 +35,15 @@ type UploadForm = {
   file: File | null;
 };
 
+type ImageEditForm = {
+  laterality: string;
+  image_type: string;
+  captured_at: string;
+  notes: string;
+};
+
+type EyeSide = "left" | "right";
+type EyeUploadForms = Record<EyeSide, UploadForm>;
 type BootState = "checking" | "starting" | "ready" | "error";
 
 const initialPatientForm: PatientForm = {
@@ -48,12 +59,52 @@ const initialSessionForm = (): SessionForm => ({
   notes: "",
 });
 
-const initialUploadForm: UploadForm = {
-  laterality: "left",
+const makeUploadForm = (laterality: string): UploadForm => ({
+  laterality,
   image_type: "color_fundus",
   notes: "",
   file: null,
-};
+});
+
+const initialEyeUploadForms = (): EyeUploadForms => ({
+  left: makeUploadForm("left"),
+  right: makeUploadForm("right"),
+});
+
+function buildSessionDraft(session: StudySession): SessionForm {
+  return {
+    session_date: session.session_date,
+    operator_name: session.operator_name ?? "",
+    notes: session.notes ?? "",
+  };
+}
+
+function toDateTimeLocal(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const hours = `${date.getHours()}`.padStart(2, "0");
+  const minutes = `${date.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function buildImageDraft(image: RetinalImage): ImageEditForm {
+  return {
+    laterality: image.laterality,
+    image_type: image.image_type,
+    captured_at: toDateTimeLocal(image.captured_at),
+    notes: image.notes ?? "",
+  };
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
@@ -69,6 +120,14 @@ function formatDate(date: string): string {
   return new Date(date).toLocaleDateString();
 }
 
+function eyeImages(session: StudySession, eye: EyeSide): RetinalImage[] {
+  return session.images.filter((image) => image.laterality === eye);
+}
+
+function otherImages(session: StudySession): RetinalImage[] {
+  return session.images.filter((image) => image.laterality !== "left" && image.laterality !== "right");
+}
+
 function App() {
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
@@ -77,7 +136,9 @@ function App() {
   const [search, setSearch] = useState("");
   const [patientForm, setPatientForm] = useState<PatientForm>(initialPatientForm);
   const [sessionForm, setSessionForm] = useState<SessionForm>(initialSessionForm);
-  const [uploadForms, setUploadForms] = useState<Record<string, UploadForm>>({});
+  const [sessionDrafts, setSessionDrafts] = useState<Record<string, SessionForm>>({});
+  const [sessionUploads, setSessionUploads] = useState<Record<string, EyeUploadForms>>({});
+  const [imageDrafts, setImageDrafts] = useState<Record<string, ImageEditForm>>({});
   const [isLoadingPatients, setIsLoadingPatients] = useState(true);
   const [isLoadingPatient, setIsLoadingPatient] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,20 +165,35 @@ function App() {
     }
   }
 
-  async function refreshPatient(patientId: string) {
+  async function refreshPatient(patientId: string, preferredImageId?: string | null) {
     setIsLoadingPatient(true);
     try {
       const detail = await fetchPatient(patientId);
       setSelectedPatient(detail);
-      setSelectedImage((current) => {
-        if (!current) {
-          return detail.sessions[0]?.images[0] ?? null;
+      setSessionDrafts((current) => {
+        const next = { ...current };
+        for (const session of detail.sessions) {
+          next[session.id] = buildSessionDraft(session);
         }
-        const stillExists = detail.sessions
-          .flatMap((session) => session.images)
-          .find((image) => image.id === current.id);
-        return stillExists ?? detail.sessions[0]?.images[0] ?? null;
+        return next;
       });
+      setSessionUploads((current) => {
+        const next = { ...current };
+        for (const session of detail.sessions) {
+          next[session.id] = next[session.id] ?? initialEyeUploadForms();
+        }
+        return next;
+      });
+
+      const allImages = detail.sessions.flatMap((session) => session.images);
+      const nextSelectedImage =
+        (preferredImageId
+          ? allImages.find((image) => image.id === preferredImageId)
+          : null) ??
+        (selectedImage ? allImages.find((image) => image.id === selectedImage.id) : null) ??
+        allImages[0] ??
+        null;
+      setSelectedImage(nextSelectedImage);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load patient detail");
     } finally {
@@ -181,6 +257,16 @@ function App() {
     void refreshPatient(selectedPatientId);
   }, [bootState, selectedPatientId]);
 
+  useEffect(() => {
+    if (!selectedImage) {
+      return;
+    }
+    setImageDrafts((current) => ({
+      ...current,
+      [selectedImage.id]: buildImageDraft(selectedImage),
+    }));
+  }, [selectedImage]);
+
   async function onCreatePatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -203,35 +289,114 @@ function App() {
       const created = await createSession(selectedPatientId, sessionForm);
       setSessionForm(initialSessionForm());
       await refreshPatient(selectedPatientId);
-      setUploadForms((current) => ({ ...current, [created.id]: initialUploadForm }));
+      setSessionUploads((current) => ({ ...current, [created.id]: initialEyeUploadForms() }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create session");
     }
   }
 
-  async function onImportImage(event: FormEvent<HTMLFormElement>, sessionId: string) {
+  async function onSaveSession(event: FormEvent<HTMLFormElement>, sessionId: string) {
     event.preventDefault();
-    const upload = uploadForms[sessionId] ?? initialUploadForm;
-    const file = upload.file;
-    if (!file || !selectedPatientId) {
-      setError("Choose an image file before importing");
+    if (!selectedPatientId) {
       return;
     }
+
+    const draft = sessionDrafts[sessionId];
+    if (!draft) {
+      return;
+    }
+
     setError(null);
     try {
-      await importImage(sessionId, { ...upload, file });
-      setUploadForms((current) => ({ ...current, [sessionId]: initialUploadForm }));
-      await refreshPatient(selectedPatientId);
+      await updateSession(sessionId, draft);
+      await refreshPatient(selectedPatientId, selectedImage?.id ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to import image");
+      setError(err instanceof Error ? err.message : "Unable to update session");
     }
   }
 
-  function updateUploadForm(sessionId: string, next: Partial<UploadForm>) {
-    setUploadForms((current) => ({
+  async function onImportImage(event: FormEvent<HTMLFormElement>, sessionId: string, eye: EyeSide) {
+    event.preventDefault();
+    const upload = sessionUploads[sessionId]?.[eye] ?? makeUploadForm(eye);
+    if (!upload.file || !selectedPatientId) {
+      setError(`Choose a ${eye} eye image before importing`);
+      return;
+    }
+
+    setError(null);
+    try {
+      await importImage(sessionId, { ...upload, laterality: eye, file: upload.file });
+      setSessionUploads((current) => ({
+        ...current,
+        [sessionId]: {
+          ...(current[sessionId] ?? initialEyeUploadForms()),
+          [eye]: makeUploadForm(eye),
+        },
+      }));
+      await refreshPatient(selectedPatientId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Unable to import ${eye} eye image`);
+    }
+  }
+
+  async function onSaveImage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedPatientId || !selectedImage) {
+      return;
+    }
+
+    const draft = imageDrafts[selectedImage.id];
+    if (!draft) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await updateImage(selectedImage.id, {
+        laterality: draft.laterality,
+        image_type: draft.image_type,
+        captured_at: draft.captured_at || null,
+        notes: draft.notes,
+      });
+      await refreshPatient(selectedPatientId, selectedImage.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update image metadata");
+    }
+  }
+
+  function updateSessionDraft(sessionId: string, next: Partial<SessionForm>) {
+    setSessionDrafts((current) => ({
       ...current,
       [sessionId]: {
-        ...(current[sessionId] ?? initialUploadForm),
+        ...(current[sessionId] ?? initialSessionForm()),
+        ...next,
+      },
+    }));
+  }
+
+  function updateEyeUpload(sessionId: string, eye: EyeSide, next: Partial<UploadForm>) {
+    setSessionUploads((current) => ({
+      ...current,
+      [sessionId]: {
+        ...(current[sessionId] ?? initialEyeUploadForms()),
+        [eye]: {
+          ...((current[sessionId] ?? initialEyeUploadForms())[eye]),
+          ...next,
+        },
+      },
+    }));
+  }
+
+  function updateImageDraft(imageId: string, next: Partial<ImageEditForm>) {
+    setImageDrafts((current) => ({
+      ...current,
+      [imageId]: {
+        ...(current[imageId] ?? {
+          laterality: "left",
+          image_type: "color_fundus",
+          captured_at: "",
+          notes: "",
+        }),
         ...next,
       },
     }));
@@ -268,7 +433,7 @@ function App() {
           <p className="eyebrow">Local-first retinal workflow</p>
           <h1>Retina</h1>
           <p className="muted">
-            Patients, sessions, and left/right eye image imports, rebuilt from the legacy Racket app.
+            Patients, sessions, and bilateral retinal capture flows rebuilt from the legacy app.
           </p>
         </div>
 
@@ -358,7 +523,7 @@ function App() {
       <main className="workspace">
         <div className="workspace-header">
           <div>
-            <p className="eyebrow">Core vertical slice</p>
+            <p className="eyebrow">Session-centered workflow</p>
             <h2>{selectedPatient ? selectedPatient.display_name : "Select a patient"}</h2>
             <p className="muted">
               {selectedPatient
@@ -408,12 +573,17 @@ function App() {
 
                 {isLoadingPatient ? <p className="muted">Loading sessions...</p> : null}
                 {!isLoadingPatient && selectedPatient.sessions.length === 0 ? (
-                  <p className="muted">No sessions yet. Create one to start importing images.</p>
+                  <p className="muted">No sessions yet. Create one to start a bilateral capture session.</p>
                 ) : null}
 
                 <div className="session-list">
                   {selectedPatient.sessions.map((session) => {
-                    const uploadForm = uploadForms[session.id] ?? initialUploadForm;
+                    const draft = sessionDrafts[session.id] ?? buildSessionDraft(session);
+                    const uploads = sessionUploads[session.id] ?? initialEyeUploadForms();
+                    const left = eyeImages(session, "left");
+                    const right = eyeImages(session, "right");
+                    const other = otherImages(session);
+
                     return (
                       <article key={session.id} className="session-card">
                         <div className="session-card-header">
@@ -427,77 +597,155 @@ function App() {
                           <span className="session-count">{session.images.length} image(s)</span>
                         </div>
 
-                        {session.notes ? <p className="session-notes">{session.notes}</p> : null}
-
-                        <form className="upload-form" onSubmit={(event) => void onImportImage(event, session.id)}>
-                          <div className="upload-row">
-                            <select
+                        <form
+                          className="session-metadata-form"
+                          onSubmit={(event) => void onSaveSession(event, session.id)}
+                        >
+                          <div className="session-meta-grid">
+                            <input
                               className="text-input"
-                              value={uploadForm.laterality}
+                              type="date"
+                              value={draft.session_date}
                               onChange={(event) =>
-                                updateUploadForm(session.id, { laterality: event.target.value })
+                                updateSessionDraft(session.id, { session_date: event.target.value })
                               }
-                            >
-                              <option value="left">Left eye</option>
-                              <option value="right">Right eye</option>
-                              <option value="unknown">Unknown</option>
-                            </select>
-                            <select
+                              required
+                            />
+                            <input
                               className="text-input"
-                              value={uploadForm.image_type}
+                              value={draft.operator_name}
+                              placeholder="Operator name"
                               onChange={(event) =>
-                                updateUploadForm(session.id, { image_type: event.target.value })
+                                updateSessionDraft(session.id, { operator_name: event.target.value })
                               }
-                            >
-                              <option value="color_fundus">Color fundus</option>
-                              <option value="red_free">Red-free</option>
-                              <option value="other">Other</option>
-                            </select>
+                            />
                           </div>
                           <textarea
                             className="text-input text-area"
-                            value={uploadForm.notes}
-                            placeholder="Image notes"
-                            onChange={(event) => updateUploadForm(session.id, { notes: event.target.value })}
+                            value={draft.notes}
+                            placeholder="Session notes"
+                            onChange={(event) => updateSessionDraft(session.id, { notes: event.target.value })}
                           />
-                          <input
-                            className="text-input file-input"
-                            type="file"
-                            accept="image/*"
-                            onChange={(event) =>
-                              updateUploadForm(session.id, { file: event.target.files?.[0] ?? null })
-                            }
-                            required
-                          />
-                          <button className="primary-button" type="submit">
-                            Import image
+                          <button className="ghost-button" type="submit">
+                            Save session details
                           </button>
                         </form>
 
-                        <div className="image-grid">
-                          {session.images.map((image) => (
-                            <button
-                              key={image.id}
-                              type="button"
-                              className={`image-card ${selectedImage?.id === image.id ? "active" : ""}`}
-                              onClick={() => setSelectedImage(image)}
-                            >
-                              <img
-                                src={imageThumbnailUrl(image.id)}
-                                alt={image.original_filename}
-                                loading="lazy"
-                              />
-                              <div className="image-card-body">
-                                <div className="badge-row">
-                                  <span className="badge">{image.laterality}</span>
-                                  <span className="badge subtle">{image.image_type}</span>
+                        <div className="bilateral-grid">
+                          {(["left", "right"] as EyeSide[]).map((eye) => {
+                            const eyeUpload = uploads[eye];
+                            const images = eye === "left" ? left : right;
+                            return (
+                              <section key={eye} className="eye-column">
+                                <div className="eye-column-header">
+                                  <h4>{eye === "left" ? "Left eye" : "Right eye"}</h4>
+                                  <span className="badge subtle">{images.length} capture(s)</span>
                                 </div>
-                                <strong>{image.original_filename}</strong>
-                                <span className="muted">{formatBytes(image.file_size_bytes)}</span>
-                              </div>
-                            </button>
-                          ))}
+
+                                <form
+                                  className="upload-form"
+                                  onSubmit={(event) => void onImportImage(event, session.id, eye)}
+                                >
+                                  <select
+                                    className="text-input"
+                                    value={eyeUpload.image_type}
+                                    onChange={(event) =>
+                                      updateEyeUpload(session.id, eye, { image_type: event.target.value })
+                                    }
+                                  >
+                                    <option value="color_fundus">Color fundus</option>
+                                    <option value="red_free">Red-free</option>
+                                    <option value="fluorescein">Fluorescein</option>
+                                    <option value="autofluorescence">Autofluorescence</option>
+                                    <option value="other">Other</option>
+                                  </select>
+                                  <textarea
+                                    className="text-input compact-text-area"
+                                    value={eyeUpload.notes}
+                                    placeholder={`${eye === "left" ? "Left" : "Right"} eye notes`}
+                                    onChange={(event) =>
+                                      updateEyeUpload(session.id, eye, { notes: event.target.value })
+                                    }
+                                  />
+                                  <input
+                                    className="text-input file-input"
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(event) =>
+                                      updateEyeUpload(session.id, eye, {
+                                        file: event.target.files?.[0] ?? null,
+                                      })
+                                    }
+                                    required
+                                  />
+                                  <button className="primary-button" type="submit">
+                                    Import {eye === "left" ? "left" : "right"} eye
+                                  </button>
+                                </form>
+
+                                <div className="image-grid eye-image-grid">
+                                  {images.length === 0 ? (
+                                    <p className="muted">No {eye} eye captures yet.</p>
+                                  ) : null}
+                                  {images.map((image) => (
+                                    <button
+                                      key={image.id}
+                                      type="button"
+                                      className={`image-card ${selectedImage?.id === image.id ? "active" : ""}`}
+                                      onClick={() => setSelectedImage(image)}
+                                    >
+                                      <img
+                                        src={imageThumbnailUrl(image.id)}
+                                        alt={image.original_filename}
+                                        loading="lazy"
+                                      />
+                                      <div className="image-card-body">
+                                        <div className="badge-row">
+                                          <span className="badge">{image.laterality}</span>
+                                          <span className="badge subtle">{image.image_type}</span>
+                                        </div>
+                                        <strong>{image.original_filename}</strong>
+                                        <span className="muted">{formatBytes(image.file_size_bytes)}</span>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </section>
+                            );
+                          })}
                         </div>
+
+                        {other.length > 0 ? (
+                          <div className="supplemental-captures">
+                            <div className="eye-column-header">
+                              <h4>Other captures</h4>
+                              <span className="badge subtle">{other.length}</span>
+                            </div>
+                            <div className="image-grid">
+                              {other.map((image) => (
+                                <button
+                                  key={image.id}
+                                  type="button"
+                                  className={`image-card ${selectedImage?.id === image.id ? "active" : ""}`}
+                                  onClick={() => setSelectedImage(image)}
+                                >
+                                  <img
+                                    src={imageThumbnailUrl(image.id)}
+                                    alt={image.original_filename}
+                                    loading="lazy"
+                                  />
+                                  <div className="image-card-body">
+                                    <div className="badge-row">
+                                      <span className="badge">{image.laterality}</span>
+                                      <span className="badge subtle">{image.image_type}</span>
+                                    </div>
+                                    <strong>{image.original_filename}</strong>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </article>
                     );
                   })}
@@ -526,14 +774,66 @@ function App() {
                   </div>
                   <h3>{selectedImage.original_filename}</h3>
                   <p className="muted">
-                    Imported {new Date(selectedImage.imported_at).toLocaleString()} •{" "}
                     {formatBytes(selectedImage.file_size_bytes)}
+                    {selectedImage.width_px && selectedImage.height_px
+                      ? ` • ${selectedImage.width_px} × ${selectedImage.height_px}`
+                      : ""}
                   </p>
-                  <p>{selectedImage.notes || "No image notes yet."}</p>
                 </div>
+
+                <form className="viewer-form" onSubmit={(event) => void onSaveImage(event)}>
+                  <div className="viewer-form-grid">
+                    <select
+                      className="text-input"
+                      value={imageDrafts[selectedImage.id]?.laterality ?? selectedImage.laterality}
+                      onChange={(event) =>
+                        updateImageDraft(selectedImage.id, { laterality: event.target.value })
+                      }
+                    >
+                      <option value="left">Left eye</option>
+                      <option value="right">Right eye</option>
+                      <option value="both">Both</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                    <select
+                      className="text-input"
+                      value={imageDrafts[selectedImage.id]?.image_type ?? selectedImage.image_type}
+                      onChange={(event) =>
+                        updateImageDraft(selectedImage.id, { image_type: event.target.value })
+                      }
+                    >
+                      <option value="color_fundus">Color fundus</option>
+                      <option value="red_free">Red-free</option>
+                      <option value="fluorescein">Fluorescein</option>
+                      <option value="autofluorescence">Autofluorescence</option>
+                      <option value="oct">OCT</option>
+                      <option value="external_photo">External photo</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <input
+                    className="text-input"
+                    type="datetime-local"
+                    value={imageDrafts[selectedImage.id]?.captured_at ?? ""}
+                    onChange={(event) =>
+                      updateImageDraft(selectedImage.id, { captured_at: event.target.value })
+                    }
+                  />
+                  <textarea
+                    className="text-input text-area"
+                    value={imageDrafts[selectedImage.id]?.notes ?? ""}
+                    placeholder="Image notes"
+                    onChange={(event) => updateImageDraft(selectedImage.id, { notes: event.target.value })}
+                  />
+                  <button className="primary-button" type="submit">
+                    Save image metadata
+                  </button>
+                </form>
               </div>
             ) : (
-              <p className="muted">Choose an imported image to inspect it here.</p>
+              <p className="muted">
+                Select an imported image to view it at full resolution and edit image-level metadata.
+              </p>
             )}
           </section>
         </div>

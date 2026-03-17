@@ -20,11 +20,13 @@ from .schemas import (
     HealthResponse,
     ImageDetail,
     ImageImportForm,
+    ImageUpdate,
     PatientCreate,
     PatientDetail,
     PatientSummary,
     SessionCreate,
     SessionSummary,
+    SessionUpdate,
 )
 from .storage import (
     StorageValidationError,
@@ -185,6 +187,30 @@ def get_session(session_id: str, db: Session = Depends(get_db)) -> StudySession:
     return get_session_or_404(db, session_id)
 
 
+@app.patch("/sessions/{session_id}", response_model=SessionSummary)
+def update_session(
+    session_id: str,
+    payload: SessionUpdate,
+    db: Session = Depends(get_db),
+) -> StudySession:
+    session_obj = get_session_or_404(db, session_id)
+
+    if "session_date" in payload.model_fields_set:
+        session_obj.session_date = payload.session_date or session_obj.session_date
+    if "captured_at" in payload.model_fields_set:
+        session_obj.captured_at = payload.captured_at
+    if "operator_name" in payload.model_fields_set:
+        session_obj.operator_name = (
+            normalize_name(payload.operator_name) if payload.operator_name else None
+        )
+    if "notes" in payload.model_fields_set:
+        session_obj.notes = payload.notes
+
+    db.commit()
+    db.refresh(session_obj)
+    return session_obj
+
+
 @app.post("/sessions/{session_id}/images/import", response_model=ImageDetail, status_code=201)
 def import_image(
     session_id: str,
@@ -268,6 +294,28 @@ def import_image(
 @app.get("/images/{image_id}", response_model=ImageDetail)
 def get_image(image_id: str, db: Session = Depends(get_db)) -> RetinalImage:
     return get_image_or_404(db, image_id)
+
+
+@app.patch("/images/{image_id}", response_model=ImageDetail)
+def update_image(
+    image_id: str,
+    payload: ImageUpdate,
+    db: Session = Depends(get_db),
+) -> RetinalImage:
+    image = get_image_or_404(db, image_id)
+
+    if "laterality" in payload.model_fields_set:
+        image.laterality = payload.laterality or image.laterality
+    if "image_type" in payload.model_fields_set:
+        image.image_type = payload.image_type or image.image_type
+    if "captured_at" in payload.model_fields_set:
+        image.captured_at = payload.captured_at
+    if "notes" in payload.model_fields_set:
+        image.notes = payload.notes
+
+    db.commit()
+    db.refresh(image)
+    return image
 
 
 @app.get("/images/{image_id}/file")

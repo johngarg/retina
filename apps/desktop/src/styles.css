@@ -163,6 +163,28 @@ button {
   margin: 0.25rem 0 0;
 }
 
+.viewer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.viewer-form-grid,
+.session-meta-grid,
+.bilateral-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.viewer-form-grid,
+.session-meta-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bilateral-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .text-input {
   width: 100%;
   padding: 0.8rem 0.9rem;
@@ -177,11 +199,18 @@ button {
   resize: vertical;
 }
 
+.compact-text-area {
+  min-height: 72px;
+}
+
 .stack,
 .session-form,
 .upload-form,
 .session-list,
-.viewer-meta {
+.viewer-meta,
+.session-metadata-form,
+.eye-column,
+.supplemental-captures {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -255,20 +284,34 @@ button {
   border: 1px solid rgba(18, 32, 42, 0.08);
 }
 
-.session-notes {
-  margin: 0;
+.eye-column {
+  padding: 0.85rem;
+  border-radius: 18px;
+  background: rgba(247, 250, 249, 0.92);
+  border: 1px solid rgba(18, 32, 42, 0.08);
 }
 
-.upload-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.eye-column-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   gap: 0.75rem;
+}
+
+.eye-column-header h4 {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font-size: 1rem;
 }
 
 .image-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 0.75rem;
+}
+
+.eye-image-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
 
 .image-card {
@@ -335,6 +378,10 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .bilateral-grid {
+    grid-template-columns: 1fr;
+  }
+
   .viewer-panel {
     position: static;
     max-height: none;
@@ -347,7 +394,8 @@ button {
     padding: 0.85rem;
   }
 
-  .upload-row {
+  .viewer-form-grid,
+  .session-meta-grid {
     grid-template-columns: 1fr;
   }
 }

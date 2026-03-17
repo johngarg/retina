@@ -53,6 +53,21 @@ class SessionCreate(BaseModel):
         return normalized or None
 
 
+class SessionUpdate(BaseModel):
+    session_date: date | None = None
+    captured_at: datetime | None = None
+    operator_name: str | None = Field(default=None, max_length=120)
+    notes: str | None = None
+
+    @field_validator("operator_name", "notes")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.strip().split())
+        return normalized or None
+
+
 class ImageSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -143,6 +158,39 @@ class ImageImportForm(BaseModel):
     @field_validator("notes")
     @classmethod
     def normalize_notes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class ImageUpdate(BaseModel):
+    laterality: LateralityLiteral | None = None
+    image_type: ImageTypeLiteral | None = None
+    notes: str | None = None
+    captured_at: datetime | None = None
+
+    @field_validator("laterality")
+    @classmethod
+    def validate_optional_laterality(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in LATERALITY_VALUES:
+            raise ValueError("invalid laterality")
+        return value
+
+    @field_validator("image_type")
+    @classmethod
+    def validate_optional_image_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in IMAGE_TYPE_VALUES:
+            raise ValueError("invalid image_type")
+        return value
+
+    @field_validator("notes")
+    @classmethod
+    def normalize_optional_notes(cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = value.strip()
