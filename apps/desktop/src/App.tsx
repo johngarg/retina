@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 
 import {
+  archivePatient,
   ApiError,
   type PatientFilters,
   createPatient,
@@ -15,6 +16,7 @@ import {
   importImage,
   openImageExternally,
   restoreBackup,
+  unarchivePatient,
   updateImage,
   updateSession,
 } from "./api";
@@ -160,11 +162,12 @@ function countImages(sessions: StudySession[]): number {
   return sessions.reduce((total, session) => total + session.images.length, 0);
 }
 
-function normalizePatientFilters(filters: SessionFilters): PatientFilters {
+function normalizePatientFilters(filters: SessionFilters, includeArchivedPatients: boolean): PatientFilters {
   return {
     session_date_from: filters.session_date_from || undefined,
     session_date_to: filters.session_date_to || undefined,
     laterality: filters.laterality || undefined,
+    include_archived: includeArchivedPatients ? "true" : undefined,
   };
 }
 
@@ -184,6 +187,7 @@ function App() {
   const [selectedPatient, setSelectedPatient] = useState<PatientDetail | null>(null);
   const [selectedImage, setSelectedImage] = useState<RetinalImage | null>(null);
   const [search, setSearch] = useState("");
+  const [includeArchivedPatients, setIncludeArchivedPatients] = useState(false);
   const [sessionFilters, setSessionFilters] = useState<SessionFilters>(initialSessionFilters);
   const [patientForm, setPatientForm] = useState<PatientForm>(initialPatientForm);
   const [sessionForm, setSessionForm] = useState<SessionForm>(initialSessionForm);
@@ -203,6 +207,7 @@ function App() {
   const [bootState, setBootState] = useState<BootState>("checking");
   const [bootMessage, setBootMessage] = useState("Checking backend availability...");
   const [connectionMessage, setConnectionMessage] = useState("Local API status unknown.");
+  const [archiveConfirmPatientId, setArchiveConfirmPatientId] = useState<string | null>(null);
   const restoreInputRef = useRef<HTMLInputElement | null>(null);
 
   function reportRequestFailure(error: unknown, action: string, target: "list" | "detail" | "notice") {
@@ -227,10 +232,14 @@ function App() {
     }
   }
 
-  async function refreshPatients(nextQuery = search, preferredPatientId?: string) {
+  async function refreshPatients(
+    nextQuery = search,
+    preferredPatientId?: string,
+    nextIncludeArchived = includeArchivedPatients,
+  ) {
     setPatientListState({ status: "loading", message: null });
     try {
-      const result = await fetchPatients(nextQuery, PATIENT_LIST_LIMIT);
+      const result = await fetchPatients(nextQuery, PATIENT_LIST_LIMIT, nextIncludeArchived);
       setPatients(result);
       setPatientListState({ status: "ready", message: null });
       setConnectionMessage("Local API connected.");
@@ -253,7 +262,7 @@ function App() {
   ): Promise<boolean> {
     setPatientDetailState({ status: "loading", message: null });
     try {
-      const detail = await fetchPatient(patientId, normalizePatientFilters(filters));
+      const detail = await fetchPatient(patientId, normalizePatientFilters(filters, includeArchivedPatients));
       setSelectedPatient(detail);
       setPatientDetailState({ status: "ready", message: null });
       setConnectionMessage("Local API connected.");
@@ -361,7 +370,7 @@ function App() {
       return;
     }
     void refreshPatient(selectedPatientId, undefined, sessionFilters);
-  }, [bootState, selectedPatientId]);
+  }, [bootState, selectedPatientId, includeArchivedPatients]);
 
   useEffect(() => {
     if (!selectedImage) {
@@ -372,6 +381,10 @@ function App() {
       [selectedImage.id]: buildImageDraft(selectedImage),
     }));
   }, [selectedImage]);
+
+  useEffect(() => {
+    setArchiveConfirmPatientId(null);
+  }, [selectedPatientId]);
 
   async function onCreatePatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -404,6 +417,49 @@ function App() {
       }
     } catch (err) {
       reportRequestFailure(err, "Unable to create session", "notice");
+    }
+  }
+
+  async function onArchivePatient() {
+    if (!selectedPatientId || !selectedPatient) {
+      return;
+    }
+    setArchiveConfirmPatientId(selectedPatientId);
+  }
+
+  async function onConfirmArchivePatient() {
+    if (!selectedPatientId || !selectedPatient) {
+      return;
+    }
+
+    setNotice(null);
+    try {
+      await archivePatient(selectedPatientId);
+      setArchiveConfirmPatientId(null);
+      setSelectedPatientId(null);
+      setSelectedPatient(null);
+      setSelectedImage(null);
+      await refreshPatients(search);
+      reportRequestSuccess("Patient archived.");
+    } catch (err) {
+      reportRequestFailure(err, "Unable to archive patient", "notice");
+    }
+  }
+
+  async function onUnarchivePatient() {
+    if (!selectedPatientId) {
+      return;
+    }
+
+    setNotice(null);
+    try {
+      await unarchivePatient(selectedPatientId);
+      await refreshPatients(search, selectedPatientId, true);
+      if (await refreshPatient(selectedPatientId, selectedImage?.id ?? null)) {
+        reportRequestSuccess("Patient restored to the active list.");
+      }
+    } catch (err) {
+      reportRequestFailure(err, "Unable to restore patient", "notice");
     }
   }
 
@@ -667,6 +723,18 @@ function App() {
               }
             }}
           />
+          <label className="inline-checkbox">
+            <input
+              type="checkbox"
+              checked={includeArchivedPatients}
+              onChange={(event) => {
+                const nextIncludeArchived = event.target.checked;
+                setIncludeArchivedPatients(nextIncludeArchived);
+                void refreshPatients(search, selectedPatientId ?? undefined, nextIncludeArchived);
+              }}
+            />
+            <span>Include archived patients in search</span>
+          </label>
           <div className="patient-list">
             {patients.length >= PATIENT_LIST_LIMIT ? (
               <p className="muted patient-list-hint">
@@ -702,11 +770,60 @@ function App() {
                 <span className="patient-card-meta">
                   DOB {patient.date_of_birth}
                   {patient.gender_text ? ` • ${patient.gender_text}` : ""}
+                  {patient.archived_at ? " • Archived" : ""}
                 </span>
               </button>
             ))}
           </div>
         </section>
+
+        {selectedPatient ? (
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Patient Status</h2>
+            </div>
+            <div className="stack">
+              <p className="muted">
+                {selectedPatient.archived_at
+                  ? `Archived ${formatDateTime(selectedPatient.archived_at)}.`
+                  : "This patient is active and shown in the default patient search."}
+              </p>
+              <div className="action-row">
+                {selectedPatient.archived_at ? (
+                  <button className="primary-button" type="button" onClick={() => void onUnarchivePatient()}>
+                    Unarchive patient
+                  </button>
+                ) : archiveConfirmPatientId === selectedPatient.id ? (
+                  <>
+                    <button
+                      className="danger-button"
+                      type="button"
+                      onClick={() => void onConfirmArchivePatient()}
+                    >
+                      Confirm archive
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => setArchiveConfirmPatientId(null)}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button className="danger-button" type="button" onClick={() => void onArchivePatient()}>
+                    Archive patient
+                  </button>
+                )}
+              </div>
+              {!selectedPatient.archived_at && archiveConfirmPatientId === selectedPatient.id ? (
+                <span className="field-help">
+                  Archiving hides this patient from the default search but keeps the record in the database.
+                </span>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
 
         <section className="panel">
           <div className="panel-header">
@@ -750,7 +867,7 @@ function App() {
               />
             </label>
             <label className="field-group">
-              <span>Sex / gender</span>
+              <span>Gender</span>
               <select
                 className="text-input"
                 value={patientForm.gender_text}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 import platform
 import subprocess
@@ -156,16 +156,37 @@ def patient_detail_response(
     return detail
 
 
-def get_patient_or_404(db: Session, patient_id: str) -> Patient:
+def get_patient_or_404(db: Session, patient_id: str, *, include_archived: bool = False) -> Patient:
+    conditions = [Patient.id == patient_id]
+    if not include_archived:
+        conditions.append(Patient.archived_at.is_(None))
     patient = db.scalar(
-        patient_query().where(
-            Patient.id == patient_id,
-            Patient.archived_at.is_(None),
-        )
+        patient_query().where(*conditions)
     )
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
     return patient
+
+
+def find_active_patient_identity_match(
+    db: Session,
+    *,
+    first_name: str,
+    last_name: str,
+    date_of_birth: date,
+    gender_text: str | None,
+    exclude_patient_id: str | None = None,
+) -> Patient | None:
+    conditions = [
+        Patient.archived_at.is_(None),
+        Patient.normalized_first_name == normalize_upper(first_name),
+        Patient.normalized_last_name == normalize_upper(last_name),
+        Patient.date_of_birth == date_of_birth,
+        Patient.gender_text == (normalize_upper(gender_text) if gender_text else None),
+    ]
+    if exclude_patient_id:
+        conditions.append(Patient.id != exclude_patient_id)
+    return db.scalar(select(Patient).where(*conditions))
 
 
 def get_session_or_404(db: Session, session_id: str) -> StudySession:
@@ -188,7 +209,12 @@ def get_image_or_404(db: Session, image_id: str) -> RetinalImage:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", version=APP_VERSION, backup_restore=True)
+    return HealthResponse(
+        status="ok",
+        version=APP_VERSION,
+        backup_restore=True,
+        patient_archive=True,
+    )
 
 
 @app.post("/backups/export", response_model=BackupSummary, status_code=201)
@@ -219,10 +245,13 @@ def restore_backup(file: UploadFile = File(...)) -> RestoreSummary:
 @app.get("/patients", response_model=list[PatientSummary])
 def list_patients(
     q: str | None = Query(default=None, min_length=1),
+    include_archived: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[Patient]:
-    stmt = select(Patient).where(Patient.archived_at.is_(None))
+    stmt = select(Patient)
+    if not include_archived:
+        stmt = stmt.where(Patient.archived_at.is_(None))
     if q:
         tokens = [token.upper() for token in q.replace(",", " ").split() if token.strip()]
         token_conditions = []
@@ -250,14 +279,12 @@ def create_patient(payload: PatientCreate, db: Session = Depends(get_db)) -> Pat
     normalized_last = normalize_upper(payload.last_name)
     gender_text = normalize_upper(payload.gender_text) if payload.gender_text else None
 
-    existing = db.scalar(
-        select(Patient).where(
-            Patient.archived_at.is_(None),
-            Patient.normalized_first_name == normalized_first,
-            Patient.normalized_last_name == normalized_last,
-            Patient.date_of_birth == payload.date_of_birth,
-            Patient.gender_text == gender_text,
-        )
+    existing = find_active_patient_identity_match(
+        db,
+        first_name=first_name,
+        last_name=last_name,
+        date_of_birth=payload.date_of_birth,
+        gender_text=gender_text,
     )
     if existing is not None:
         raise HTTPException(status_code=409, detail="Patient already exists")
@@ -291,16 +318,48 @@ def create_patient(payload: PatientCreate, db: Session = Depends(get_db)) -> Pat
     return patient
 
 
+@app.post("/patients/{patient_id}/archive", response_model=PatientSummary)
+def archive_patient(patient_id: str, db: Session = Depends(get_db)) -> Patient:
+    patient = get_patient_or_404(db, patient_id)
+    patient.archived_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(patient)
+    return patient
+
+
+@app.post("/patients/{patient_id}/unarchive", response_model=PatientSummary)
+def unarchive_patient(patient_id: str, db: Session = Depends(get_db)) -> Patient:
+    patient = get_patient_or_404(db, patient_id, include_archived=True)
+    existing = find_active_patient_identity_match(
+        db,
+        first_name=patient.first_name,
+        last_name=patient.last_name,
+        date_of_birth=patient.date_of_birth,
+        gender_text=patient.gender_text,
+        exclude_patient_id=patient.id,
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="An active patient with the same identity already exists. Review records before restoring this one.",
+        )
+    patient.archived_at = None
+    db.commit()
+    db.refresh(patient)
+    return patient
+
+
 @app.get("/patients/{patient_id}", response_model=PatientDetail)
 def get_patient(
     patient_id: str,
+    include_archived: bool = Query(default=False),
     session_date_from: date | None = Query(default=None),
     session_date_to: date | None = Query(default=None),
     laterality: str | None = Query(default=None),
     image_type: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> PatientDetail:
-    patient = get_patient_or_404(db, patient_id)
+    patient = get_patient_or_404(db, patient_id, include_archived=include_archived)
     normalized_laterality = validate_optional_choice(
         "laterality",
         laterality,
@@ -323,13 +382,14 @@ def get_patient(
 @app.get("/patients/{patient_id}/sessions", response_model=list[SessionSummary])
 def list_patient_sessions(
     patient_id: str,
+    include_archived: bool = Query(default=False),
     session_date_from: date | None = Query(default=None),
     session_date_to: date | None = Query(default=None),
     laterality: str | None = Query(default=None),
     image_type: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[SessionSummary]:
-    patient = get_patient_or_404(db, patient_id)
+    patient = get_patient_or_404(db, patient_id, include_archived=include_archived)
     normalized_laterality = validate_optional_choice(
         "laterality",
         laterality,

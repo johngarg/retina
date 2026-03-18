@@ -124,6 +124,7 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     backup_restore: bool
+    patient_archive: bool
 
 
 class BackupSummary(BaseModel):

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApiError,
+  archivePatient,
   createPatient,
   describeApiError,
   exportBackup,
@@ -52,6 +53,7 @@ describe("api client", () => {
     expect(result.error).toBeInstanceOf(ApiError);
     expect(result.error?.status).toBe(503);
     expect(result.backupRestore).toBe(false);
+    expect(result.patientArchive).toBe(false);
   });
 
   it("maps network errors to actionable messages", () => {
@@ -138,6 +140,28 @@ describe("api client", () => {
     await expect(exportBackup()).rejects.toMatchObject({
       name: "ApiError",
       detail: "An older Retina backend is already running on port 8000. Close other Retina instances and retry.",
+    });
+  });
+
+  it("explains when an older backend is missing patient archive routes", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "Not Found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "ok", backup_restore: true, patient_archive: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(archivePatient("patient-1")).rejects.toMatchObject({
+      name: "ApiError",
+      detail: "An older Retina backend is already running on port 8000. Restart Retina and retry patient archiving.",
     });
   });
 });

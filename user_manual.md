@@ -66,7 +66,7 @@ Required fields:
 
 Optional or selectable field:
 
-- `Sex / gender`
+- `Gender`
 
 To create the patient:
 
@@ -83,7 +83,7 @@ The list shows:
 
 - patient name
 - DOB
-- sex/gender if present
+- gender if present
 
 Click a patient to load their record in the main workspace.
 

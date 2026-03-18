@@ -222,6 +222,60 @@ def test_duplicate_patient_conflict() -> None:
     assert response.status_code == 409
 
 
+def test_archived_patient_is_hidden_from_active_queries() -> None:
+    patient = create_patient()
+
+    response = client.post(f"/patients/{patient['id']}/archive")
+    assert response.status_code == 200
+    archived = response.json()
+    assert archived["archived_at"] is not None
+
+    response = client.get("/patients")
+    assert response.status_code == 200
+    assert all(entry["id"] != patient["id"] for entry in response.json())
+
+    response = client.get("/patients", params={"include_archived": "true"})
+    assert response.status_code == 200
+    assert any(entry["id"] == patient["id"] for entry in response.json())
+
+    response = client.get(f"/patients/{patient['id']}")
+    assert response.status_code == 404
+
+    response = client.get(f"/patients/{patient['id']}", params={"include_archived": "true"})
+    assert response.status_code == 200
+
+    response = client.post(f"/patients/{patient['id']}/unarchive")
+    assert response.status_code == 200
+    restored = response.json()
+    assert restored["archived_at"] is None
+
+    response = client.get("/patients")
+    assert response.status_code == 200
+    assert any(entry["id"] == patient["id"] for entry in response.json())
+
+
+def test_unarchive_rejects_duplicate_active_patient() -> None:
+    archived_patient = create_patient()
+
+    response = client.post(f"/patients/{archived_patient['id']}/archive")
+    assert response.status_code == 200
+
+    response = client.post(
+        "/patients",
+        json={
+            "first_name": archived_patient["first_name"],
+            "last_name": archived_patient["last_name"],
+            "date_of_birth": archived_patient["date_of_birth"],
+            "gender_text": archived_patient["gender_text"],
+        },
+    )
+    assert response.status_code == 201
+
+    response = client.post(f"/patients/{archived_patient['id']}/unarchive")
+    assert response.status_code == 409
+    assert "same identity already exists" in response.json()["detail"]
+
+
 def test_patient_search_matches_first_last_tokens_and_legacy_id() -> None:
     patient = create_patient()
 

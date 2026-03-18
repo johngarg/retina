@@ -21,6 +21,7 @@ type HealthCheckResult = {
   ok: boolean;
   error: ApiError | null;
   backupRestore: boolean;
+  patientArchive: boolean;
 };
 
 type ErrorPayload = {
@@ -32,6 +33,7 @@ export type PatientFilters = {
   session_date_from?: string;
   session_date_to?: string;
   laterality?: string;
+  include_archived?: string;
 };
 
 export class ApiError extends Error {
@@ -168,8 +170,16 @@ export function describeApiError(error: unknown, action: string): string {
   return apiError.detail || action;
 }
 
-export async function fetchPatients(query = "", limit = 100): Promise<PatientSummary[]> {
-  const search = buildQueryString({ q: query, limit: String(limit) });
+export async function fetchPatients(
+  query = "",
+  limit = 100,
+  includeArchived = false,
+): Promise<PatientSummary[]> {
+  const search = buildQueryString({
+    q: query,
+    limit: String(limit),
+    include_archived: includeArchived ? "true" : undefined,
+  });
   return request<PatientSummary[]>(`/patients${search}`);
 }
 
@@ -186,6 +196,50 @@ export async function createPatient(input: {
     },
     body: JSON.stringify(input),
   });
+}
+
+export async function archivePatient(patientId: string): Promise<PatientSummary> {
+  try {
+    return await request<PatientSummary>(`/patients/${patientId}/archive`, {
+      method: "POST",
+    });
+  } catch (error) {
+    const apiError = buildRequestError(error);
+    if (apiError.status === 404) {
+      const health = await fetchHealth();
+      if (health.ok && !health.patientArchive) {
+        throw new ApiError({
+          kind: "http",
+          status: 409,
+          detail: "An older Retina backend is already running on port 8000. Restart Retina and retry patient archiving.",
+          retryable: true,
+        });
+      }
+    }
+    throw apiError;
+  }
+}
+
+export async function unarchivePatient(patientId: string): Promise<PatientSummary> {
+  try {
+    return await request<PatientSummary>(`/patients/${patientId}/unarchive`, {
+      method: "POST",
+    });
+  } catch (error) {
+    const apiError = buildRequestError(error);
+    if (apiError.status === 404) {
+      const health = await fetchHealth();
+      if (health.ok && !health.patientArchive) {
+        throw new ApiError({
+          kind: "http",
+          status: 409,
+          detail: "An older Retina backend is already running on port 8000. Restart Retina and retry patient restore.",
+          retryable: true,
+        });
+      }
+    }
+    throw apiError;
+  }
 }
 
 export async function fetchPatient(
@@ -318,10 +372,14 @@ export async function fetchHealth(): Promise<HealthCheckResult> {
   try {
     const response = await fetch(`${apiBaseUrl()}/health`, { headers: baseHeaders });
     if (!response.ok) {
-      return { ok: false, error: await buildHttpError(response), backupRestore: false };
+      return { ok: false, error: await buildHttpError(response), backupRestore: false, patientArchive: false };
     }
 
-    const data = (await response.json()) as { status?: string; backup_restore?: boolean };
+    const data = (await response.json()) as {
+      status?: string;
+      backup_restore?: boolean;
+      patient_archive?: boolean;
+    };
     if (data.status !== "ok") {
       return {
         ok: false,
@@ -331,11 +389,17 @@ export async function fetchHealth(): Promise<HealthCheckResult> {
           retryable: true,
         }),
         backupRestore: false,
+        patientArchive: false,
       };
     }
-    return { ok: true, error: null, backupRestore: data.backup_restore === true };
+    return {
+      ok: true,
+      error: null,
+      backupRestore: data.backup_restore === true,
+      patientArchive: data.patient_archive === true,
+    };
   } catch (error) {
-    return { ok: false, error: buildRequestError(error), backupRestore: false };
+    return { ok: false, error: buildRequestError(error), backupRestore: false, patientArchive: false };
   }
 }
 
