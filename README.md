@@ -10,6 +10,8 @@ The rewrite uses:
 - `apps/api`: FastAPI local backend
 - SQLite + managed filesystem storage for images and thumbnails
 
+Please see the [user manual](user_manual.md) for details on how to use the app.
+
 ## Current status
 
 The app currently supports:
@@ -23,7 +25,7 @@ The app currently supports:
 - local backup export
 - audit logging for core create/edit/import/backup actions
 
-This is already usable as a developer-run prototype. It now has a defined packaging path for macOS and Windows.
+This is already usable as a developer-run prototype. It also now has a defined packaging path for macOS and Windows.
 
 The current release path is:
 
