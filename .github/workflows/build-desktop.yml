@@ -70,23 +70,8 @@ jobs:
         working-directory: apps/desktop
         run: npm test
 
-      - name: Prepare App Store Connect API key
-        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY_P8 != ''
-        shell: bash
-        run: |
-          KEY_PATH="$RUNNER_TEMP/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
-          printf '%s' "${{ secrets.APPLE_API_KEY_P8 }}" > "$KEY_PATH"
-          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
-
       - name: Build desktop bundle
         working-directory: apps/desktop
-        env:
-          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_API_ISSUER: ${{ runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_API_ISSUER || '' }}
-          APPLE_API_KEY: ${{ runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v') && secrets.APPLE_API_KEY || '' }}
-          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
         run: npm run ${{ matrix.bundle_script }}
 
       - name: Package macOS app bundle as zip

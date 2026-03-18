@@ -50,6 +50,12 @@ Download the app from the [latest release](../../releases/latest).
 
 If the app is not yet signed and notarized, macOS may warn that the app is from an unidentified developer. That is expected for pre-release or internal builds.
 
+If macOS blocks the downloaded app, testers can remove the quarantine flag with:
+
+```bash
+xattr -cr ~/Downloads/Retina.app
+```
+
 ### Windows
 
 1. Open the [Releases page](../../releases/latest).
@@ -191,7 +197,6 @@ See:
 - `docs/distribution.md`
 - `docs/installer-testing.md`
 - `docs/install.md`
-- `docs/macos-signing.md`
 
 ## Near-term priority
 
