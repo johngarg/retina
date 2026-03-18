@@ -57,7 +57,7 @@ def build_original_storage_name(image_id: str, original_filename: str) -> tuple[
     suffix = ensure_suffix(original_filename)
     today = datetime.now(timezone.utc)
     relative = Path(IMAGE_ORIGINAL_ROOT) / f"{today:%Y}" / f"{today:%m}" / f"{image_id}{suffix}"
-    return DATA_DIR / relative, str(relative)
+    return DATA_DIR / relative, relative.as_posix()
 
 
 def build_thumbnail_storage_name(image_id: str, original_relative: str | None = None) -> tuple[Path, str]:
@@ -67,11 +67,11 @@ def build_thumbnail_storage_name(image_id: str, original_relative: str | None = 
             year = original_path.parts[-3]
             month = original_path.parts[-2]
             relative = Path(IMAGE_THUMBNAIL_ROOT) / year / month / f"{image_id}.png"
-            return DATA_DIR / relative, str(relative)
+            return DATA_DIR / relative, relative.as_posix()
 
     today = datetime.now(timezone.utc)
     relative = Path(IMAGE_THUMBNAIL_ROOT) / f"{today:%Y}" / f"{today:%m}" / f"{image_id}.png"
-    return DATA_DIR / relative, str(relative)
+    return DATA_DIR / relative, relative.as_posix()
 
 
 def remove_storage_path(relative_path: str | None) -> None:

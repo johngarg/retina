@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -282,7 +283,7 @@ def import_legacy_dataset(legacy_root: Path, db: Session) -> LegacyImportReport:
     if not database_path.exists():
         raise FileNotFoundError(f"Legacy database not found: {database_path}")
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.row_factory = sqlite3.Row
         patient_rows = connection.execute(
             "SELECT patient_id, firstname, lastname, dob, gender, archived FROM patients ORDER BY patient_id"
