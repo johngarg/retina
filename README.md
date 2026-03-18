@@ -191,6 +191,7 @@ See:
 - `docs/distribution.md`
 - `docs/installer-testing.md`
 - `docs/install.md`
+- `docs/macos-signing.md`
 
 ## Near-term priority
 
