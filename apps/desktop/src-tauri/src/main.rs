@@ -3,6 +3,8 @@
 use std::{
     fs,
     fs::OpenOptions,
+    io::ErrorKind,
+    net::TcpListener,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -44,6 +46,21 @@ fn prepare_backend_logs(data_dir: &PathBuf) -> Result<(PathBuf, PathBuf), String
         .map_err(|error| format!("Failed to create backend stderr log: {error}"))?;
 
     Ok((stdout_log, stderr_log))
+}
+
+fn ensure_backend_port_available() -> Result<(), String> {
+    match TcpListener::bind("127.0.0.1:8000") {
+        Ok(listener) => {
+            drop(listener);
+            Ok(())
+        }
+        Err(error) if error.kind() == ErrorKind::AddrInUse => Err(
+            "Port 8000 is already in use. Close any other Retina instance or local service using 127.0.0.1:8000, then retry.".into(),
+        ),
+        Err(error) => Err(format!(
+            "Failed to check whether 127.0.0.1:8000 is available: {error}"
+        )),
+    }
 }
 
 fn shutdown_backend(state: &BackendState) {
@@ -170,6 +187,7 @@ fn ensure_backend_started(
     }
 
     let (backend_executable, backend_workdir, data_dir) = resolve_backend_runtime(&app)?;
+    ensure_backend_port_available()?;
     #[cfg(debug_assertions)]
     let mut command = {
         let mut command = Command::new(&backend_executable);
