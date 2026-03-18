@@ -1,6 +1,6 @@
 [package]
 name = "retina-desktop"
-version = "0.1.8"
+version = "0.1.9"
 description = "Tauri shell for the Retina desktop app"
 authors = ["John Gargalionis"]
 edition = "2021"
