@@ -11,6 +11,10 @@ from .constants import IMAGE_ORIGINAL_ROOT, IMAGE_THUMBNAIL_ROOT
 from .models import RetinalImage
 
 
+def normalize_relpath(value: str | Path) -> str:
+    return Path(value).as_posix()
+
+
 @dataclass
 class IntegrityIssue:
     issue_type: str
@@ -51,7 +55,7 @@ def relative_files(root: Path) -> set[str]:
     if not root.exists():
         return set()
     return {
-        str(path.relative_to(DATA_DIR))
+        normalize_relpath(path.relative_to(DATA_DIR))
         for path in root.rglob("*")
         if path.is_file()
     }
@@ -59,8 +63,10 @@ def relative_files(root: Path) -> set[str]:
 
 def scan_storage_integrity(db: Session) -> IntegrityScanResult:
     images = list(db.scalars(select(RetinalImage)))
-    expected_originals = {image.storage_relpath for image in images}
-    expected_thumbnails = {image.thumbnail_relpath for image in images if image.thumbnail_relpath}
+    expected_originals = {normalize_relpath(image.storage_relpath) for image in images}
+    expected_thumbnails = {
+        normalize_relpath(image.thumbnail_relpath) for image in images if image.thumbnail_relpath
+    }
 
     existing_originals = relative_files(DATA_DIR / IMAGE_ORIGINAL_ROOT)
     existing_thumbnails = relative_files(DATA_DIR / IMAGE_THUMBNAIL_ROOT)
