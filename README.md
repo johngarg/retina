@@ -144,6 +144,16 @@ Artifact:
 
 GitHub Actions now builds desktop bundles on both macOS and Windows via `.github/workflows/build-desktop.yml`. This is the main automated packaging validation path for Windows until installer testing is done on a clean Windows machine.
 
+### Updating the app version
+
+The project version is tracked from the repo-root `VERSION` file and used by the backend health endpoint. Before creating a new release tag, sync the desktop and backend metadata with:
+
+```bash
+node scripts/sync-version.mjs 0.1.1
+```
+
+Then commit that version bump and create the matching git tag.
+
 ## Data and operations
 
 The app is local-first:

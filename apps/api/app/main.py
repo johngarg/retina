@@ -44,6 +44,7 @@ from .storage import (
     remove_storage_artifacts,
     store_upload,
 )
+from .version import APP_VERSION
 
 
 ensure_app_dirs()
@@ -51,7 +52,7 @@ run_migrations()
 with SessionLocal() as startup_session:
     backfill_missing_thumbnails(startup_session)
 
-app = FastAPI(title="Retina API", version="0.1.0")
+app = FastAPI(title="Retina API", version=APP_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
@@ -187,7 +188,7 @@ def get_image_or_404(db: Session, image_id: str) -> RetinalImage:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", version="0.1.0", backup_restore=True)
+    return HealthResponse(status="ok", version=APP_VERSION, backup_restore=True)
 
 
 @app.post("/backups/export", response_model=BackupSummary, status_code=201)

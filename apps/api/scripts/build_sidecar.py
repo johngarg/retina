@@ -21,6 +21,7 @@ def main() -> None:
     api_dir = Path(__file__).resolve().parents[1]
     repo_root = api_dir.parents[1]
     tauri_backend_dir = repo_root / "apps" / "desktop" / "src-tauri" / "backend"
+    version_file = repo_root / "VERSION"
     build_dir = api_dir / ".pyinstaller-build"
     config_dir = api_dir / ".pyinstaller-config"
     spec_dir = api_dir / ".pyinstaller-spec"
@@ -53,8 +54,13 @@ def main() -> None:
         str(api_dir),
         "--add-data",
         f"{api_dir / 'alembic'}{os.pathsep}alembic",
+        "--add-data",
+        f"{version_file}{os.pathsep}.",
         str(api_dir / "run_server.py"),
     ]
+
+    if platform.system() == "Windows":
+        command.append("--noconsole")
 
     environment = os.environ.copy()
     environment["PYINSTALLER_CONFIG_DIR"] = str(config_dir)
