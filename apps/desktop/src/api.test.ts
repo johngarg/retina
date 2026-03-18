@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, createPatient, describeApiError, fetchHealth, fetchPatient, fetchPatients } from "./api";
+import {
+  ApiError,
+  createPatient,
+  describeApiError,
+  exportBackup,
+  fetchHealth,
+  fetchPatient,
+  fetchPatients,
+} from "./api";
 
 vi.mock("./tauri", () => ({
   isTauriRuntime: () => false,
@@ -43,6 +51,7 @@ describe("api client", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBeInstanceOf(ApiError);
     expect(result.error?.status).toBe(503);
+    expect(result.backupRestore).toBe(false);
   });
 
   it("maps network errors to actionable messages", () => {
@@ -108,5 +117,27 @@ describe("api client", () => {
       "/api/patients?limit=100",
       expect.any(Object),
     );
+  });
+
+  it("explains when an older backend is missing backup routes", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "Not Found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(exportBackup()).rejects.toMatchObject({
+      name: "ApiError",
+      detail: "An older Retina backend is already running on port 8000. Close other Retina instances and retry.",
+    });
   });
 });

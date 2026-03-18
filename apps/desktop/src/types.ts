@@ -49,3 +49,27 @@ export type StudySession = {
 export type PatientDetail = PatientSummary & {
   sessions: StudySession[];
 };
+
+export type BackupSummary = {
+  archive_path: string;
+  created_at: string;
+  patients: number;
+  sessions: number;
+  images: number;
+  audit_events: number;
+  original_files: number;
+  thumbnail_files: number;
+  size_bytes: number;
+};
+
+export type RestoreSummary = {
+  restored_at: string;
+  source_archive_name: string;
+  safety_backup_path: string;
+  patients: number;
+  sessions: number;
+  images: number;
+  audit_events: number;
+  original_files: number;
+  thumbnail_files: number;
+};

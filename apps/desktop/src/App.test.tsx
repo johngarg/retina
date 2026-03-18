@@ -10,9 +10,11 @@ const apiMocks = vi.hoisted(() => ({
   fetchPatient: vi.fn(),
   createPatient: vi.fn(),
   createSession: vi.fn(),
+  exportBackup: vi.fn(),
   updateSession: vi.fn(),
   importImage: vi.fn(),
   openImageExternally: vi.fn(),
+  restoreBackup: vi.fn(),
   updateImage: vi.fn(),
   imageFileUrl: vi.fn((imageId: string) => `/images/${imageId}/file`),
   imageThumbnailUrl: vi.fn((imageId: string) => `/images/${imageId}/thumbnail`),
@@ -39,9 +41,11 @@ describe("App", () => {
     apiMocks.fetchPatient.mockReset();
     apiMocks.createPatient.mockReset();
     apiMocks.createSession.mockReset();
+    apiMocks.exportBackup.mockReset();
     apiMocks.updateSession.mockReset();
     apiMocks.importImage.mockReset();
     apiMocks.openImageExternally.mockReset();
+    apiMocks.restoreBackup.mockReset();
     apiMocks.updateImage.mockReset();
   });
 

@@ -21,8 +21,8 @@ The app currently supports:
 - importing left/right retinal images from the filesystem
 - viewing thumbnails and full-resolution images
 - editing visit notes and image metadata
+- local backup export and restore
 - legacy data import
-- local backup export
 - audit logging for core create/edit/import/backup actions
 
 This is already usable as a developer-run prototype. It also now has a defined packaging path for macOS and Windows.
@@ -175,6 +175,8 @@ This creates a timestamped zip archive containing:
 - managed original image files
 - managed thumbnails
 - `manifest.json`
+
+The desktop app also includes `Export backup` and `Restore from backup` actions in the left sidebar.
 
 ### Legacy import
 

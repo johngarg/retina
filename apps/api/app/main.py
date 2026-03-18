@@ -4,6 +4,7 @@ from datetime import date, datetime
 from pathlib import Path
 import platform
 import subprocess
+import tempfile
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -14,6 +15,7 @@ from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from .audit import log_audit_event
+from .backup import BackupValidationError, create_backup_archive, restore_backup_archive
 from .config import DATA_DIR, ensure_app_dirs
 from .constants import IMAGE_TYPE_VALUES, LATERALITY_VALUES
 from .database import SessionLocal, get_db
@@ -22,6 +24,7 @@ from .migrations import run_migrations
 from .models import Patient, RetinalImage, StudySession
 from .schemas import (
     HealthResponse,
+    BackupSummary,
     ImageDetail,
     ImageImportForm,
     ImageSummary,
@@ -29,6 +32,7 @@ from .schemas import (
     PatientCreate,
     PatientDetail,
     PatientSummary,
+    RestoreSummary,
     SessionCreate,
     SessionSummary,
     SessionUpdate,
@@ -180,7 +184,32 @@ def get_image_or_404(db: Session, image_id: str) -> RetinalImage:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok")
+    return HealthResponse(status="ok", version="0.1.0", backup_restore=True)
+
+
+@app.post("/backups/export", response_model=BackupSummary, status_code=201)
+def export_backup(db: Session = Depends(get_db)) -> BackupSummary:
+    result = create_backup_archive(db)
+    return BackupSummary.model_validate(result.to_dict())
+
+
+@app.post("/backups/restore", response_model=RestoreSummary)
+def restore_backup(file: UploadFile = File(...)) -> RestoreSummary:
+    suffix = Path(file.filename or "backup.zip").suffix or ".zip"
+    with tempfile.NamedTemporaryFile(prefix="retina-restore-upload-", suffix=suffix, delete=False) as temp_file:
+        temp_path = Path(temp_file.name)
+        temp_file.write(file.file.read())
+
+    try:
+        result = restore_backup_archive(temp_path, source_archive_name=file.filename)
+    except BackupValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        file.file.close()
+        if temp_path.exists():
+            temp_path.unlink()
+
+    return RestoreSummary.model_validate(result.to_dict())
 
 
 @app.get("/patients", response_model=list[PatientSummary])

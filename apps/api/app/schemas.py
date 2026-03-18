@@ -122,6 +122,32 @@ class ImageDetail(ImageSummary):
 
 class HealthResponse(BaseModel):
     status: str
+    version: str
+    backup_restore: bool
+
+
+class BackupSummary(BaseModel):
+    archive_path: str
+    created_at: datetime
+    patients: int
+    sessions: int
+    images: int
+    audit_events: int
+    original_files: int
+    thumbnail_files: int
+    size_bytes: int
+
+
+class RestoreSummary(BaseModel):
+    restored_at: datetime
+    source_archive_name: str
+    safety_backup_path: str
+    patients: int
+    sessions: int
+    images: int
+    audit_events: int
+    original_files: int
+    thumbnail_files: int
 
 
 LateralityLiteral = Literal["left", "right", "both", "unknown"]

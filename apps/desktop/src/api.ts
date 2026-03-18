@@ -1,5 +1,12 @@
 import { isTauriRuntime } from "./tauri";
-import type { PatientDetail, PatientSummary, RetinalImage, StudySession } from "./types";
+import type {
+  BackupSummary,
+  PatientDetail,
+  PatientSummary,
+  RestoreSummary,
+  RetinalImage,
+  StudySession,
+} from "./types";
 
 const baseHeaders = {
   Accept: "application/json",
@@ -13,6 +20,7 @@ type RequestOptions = RequestInit & {
 type HealthCheckResult = {
   ok: boolean;
   error: ApiError | null;
+  backupRestore: boolean;
 };
 
 type ErrorPayload = {
@@ -258,14 +266,62 @@ export async function updateImage(
   });
 }
 
+export async function exportBackup(): Promise<BackupSummary> {
+  try {
+    return await request<BackupSummary>("/backups/export", {
+      method: "POST",
+    });
+  } catch (error) {
+    const apiError = buildRequestError(error);
+    if (apiError.status === 404) {
+      const health = await fetchHealth();
+      if (health.ok && !health.backupRestore) {
+        throw new ApiError({
+          kind: "http",
+          status: 409,
+          detail: "An older Retina backend is already running on port 8000. Close other Retina instances and retry.",
+          retryable: true,
+        });
+      }
+    }
+    throw apiError;
+  }
+}
+
+export async function restoreBackup(file: File): Promise<RestoreSummary> {
+  const body = new FormData();
+  body.append("file", file);
+
+  try {
+    return await request<RestoreSummary>("/backups/restore", {
+      method: "POST",
+      body,
+    });
+  } catch (error) {
+    const apiError = buildRequestError(error);
+    if (apiError.status === 404) {
+      const health = await fetchHealth();
+      if (health.ok && !health.backupRestore) {
+        throw new ApiError({
+          kind: "http",
+          status: 409,
+          detail: "An older Retina backend is already running on port 8000. Close other Retina instances and retry.",
+          retryable: true,
+        });
+      }
+    }
+    throw apiError;
+  }
+}
+
 export async function fetchHealth(): Promise<HealthCheckResult> {
   try {
     const response = await fetch(`${apiBaseUrl()}/health`, { headers: baseHeaders });
     if (!response.ok) {
-      return { ok: false, error: await buildHttpError(response) };
+      return { ok: false, error: await buildHttpError(response), backupRestore: false };
     }
 
-    const data = (await response.json()) as { status?: string };
+    const data = (await response.json()) as { status?: string; backup_restore?: boolean };
     if (data.status !== "ok") {
       return {
         ok: false,
@@ -274,11 +330,12 @@ export async function fetchHealth(): Promise<HealthCheckResult> {
           detail: "Local API health response was invalid.",
           retryable: true,
         }),
+        backupRestore: false,
       };
     }
-    return { ok: true, error: null };
+    return { ok: true, error: null, backupRestore: data.backup_restore === true };
   } catch (error) {
-    return { ok: false, error: buildRequestError(error) };
+    return { ok: false, error: buildRequestError(error), backupRestore: false };
   }
 }
 

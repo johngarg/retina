@@ -269,6 +269,10 @@ button {
   color: #5d7077;
 }
 
+.hidden-file-input {
+  display: none;
+}
+
 .patient-list {
   display: flex;
   flex-direction: column;

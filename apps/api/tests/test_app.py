@@ -429,6 +429,43 @@ def test_backup_archive_contains_database_manifest_and_images() -> None:
     assert latest_backup_event.action == "backup_created"
 
 
+def test_backup_export_and_restore_roundtrip() -> None:
+    patient = create_patient()
+    session_obj = create_session(patient["id"])
+    import_test_image(session_obj["id"], laterality="left", notes="Roundtrip image")
+
+    response = client.post("/backups/export")
+    assert response.status_code == 201
+    backup = response.json()
+
+    backup_path = Path(backup["archive_path"])
+    assert backup_path.exists()
+
+    extra_patient = create_patient()
+    response = client.get("/patients")
+    assert response.status_code == 200
+    current_ids = {entry["id"] for entry in response.json()}
+    assert patient["id"] in current_ids
+    assert extra_patient["id"] in current_ids
+
+    with backup_path.open("rb") as archive_file:
+        response = client.post(
+            "/backups/restore",
+            files={"file": ("retina-backup.zip", archive_file, "application/zip")},
+        )
+
+    assert response.status_code == 200
+    restored = response.json()
+    assert restored["source_archive_name"] == "retina-backup.zip"
+    assert restored["safety_backup_path"].endswith(".zip")
+
+    response = client.get("/patients")
+    assert response.status_code == 200
+    restored_ids = {entry["id"] for entry in response.json()}
+    assert patient["id"] in restored_ids
+    assert extra_patient["id"] not in restored_ids
+
+
 def build_legacy_fixture(root: Path) -> Path:
     if root.exists():
         for path in sorted(root.rglob("*"), reverse=True):

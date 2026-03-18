@@ -23,6 +23,7 @@ This panel contains:
 - the patient search box
 - the patient list
 - the `New Patient` form
+- the `Backups` panel
 
 ### Middle panel
 
@@ -258,6 +259,39 @@ The app stores data locally on the device.
 Imported images and thumbnails are kept in app-managed storage. Patient records, visits, and metadata are stored in the local database.
 
 Your data should still be present when you close and reopen the app.
+
+## Exporting a backup
+
+Use the `Backups` panel in the left sidebar.
+
+To export a backup:
+
+1. Click `Export backup`.
+2. Wait for the success message.
+3. Note the backup path shown by the app.
+
+The backup is stored as a zip file and contains:
+
+- the local database
+- managed original images
+- managed thumbnails
+- a manifest file
+
+## Restoring from a backup
+
+Use the `Backups` panel in the left sidebar.
+
+To restore:
+
+1. Click `Restore from backup`.
+2. Choose a previously exported backup zip file.
+3. Confirm that you want to replace the current local data.
+
+Important:
+
+- restore replaces the current local patient database and managed images
+- the app creates a safety backup before restoring
+- after restore, the app reloads the restored patient list
 
 ## Current limitations
 

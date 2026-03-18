@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
@@ -6,6 +6,7 @@ import {
   createPatient,
   createSession,
   describeApiError,
+  exportBackup,
   fetchHealth,
   fetchPatient,
   fetchPatients,
@@ -13,6 +14,7 @@ import {
   imageThumbnailUrl,
   importImage,
   openImageExternally,
+  restoreBackup,
   updateImage,
   updateSession,
 } from "./api";
@@ -201,6 +203,7 @@ function App() {
   const [bootState, setBootState] = useState<BootState>("checking");
   const [bootMessage, setBootMessage] = useState("Checking backend availability...");
   const [connectionMessage, setConnectionMessage] = useState("Local API status unknown.");
+  const restoreInputRef = useRef<HTMLInputElement | null>(null);
 
   function reportRequestFailure(error: unknown, action: string, target: "list" | "detail" | "notice") {
     const message = describeApiError(error, action);
@@ -493,6 +496,55 @@ function App() {
     }
   }
 
+  async function onExportBackup() {
+    setNotice(null);
+    try {
+      const result = await exportBackup();
+      reportRequestSuccess(`Backup saved to ${result.archive_path}`);
+    } catch (err) {
+      reportRequestFailure(err, "Unable to export backup", "notice");
+    }
+  }
+
+  async function onRestoreBackupSelected(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Restore from backup will replace the current local patient database and managed images. Continue?",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setNotice({ tone: "info", message: "Restoring backup..." });
+    try {
+      const result = await restoreBackup(file);
+      setSelectedPatientId(null);
+      setSelectedPatient(null);
+      setSelectedImage(null);
+      setSearch("");
+      setSessionFilters(initialSessionFilters());
+      await refreshPatients("");
+      setWorkspaceView("sessions");
+      setNotice({
+        tone: "success",
+        message: `Backup restored from ${result.source_archive_name}. Safety backup saved to ${result.safety_backup_path}.`,
+      });
+      setConnectionMessage("Local API connected.");
+    } catch (err) {
+      reportRequestFailure(err, "Unable to restore backup", "notice");
+    }
+  }
+
+  function onChooseRestoreBackup() {
+    restoreInputRef.current?.click();
+  }
+
   function updateSessionDraft(sessionId: string, next: Partial<SessionForm>) {
     setSessionDrafts((current) => ({
       ...current,
@@ -716,6 +768,33 @@ function App() {
               Create patient
             </button>
           </form>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Backups</h2>
+          </div>
+          <p className="muted">
+            Export a full local backup or restore the app from a previously exported backup zip.
+          </p>
+          <div className="stack">
+            <button className="ghost-button" type="button" onClick={() => void onExportBackup()}>
+              Export backup
+            </button>
+            <button className="ghost-button" type="button" onClick={onChooseRestoreBackup}>
+              Restore from backup
+            </button>
+            <input
+              ref={restoreInputRef}
+              type="file"
+              accept=".zip,application/zip"
+              className="hidden-file-input"
+              onChange={(event) => void onRestoreBackupSelected(event)}
+            />
+            <span className="field-help">
+              Restore replaces the current local database and managed images with the selected backup.
+            </span>
+          </div>
         </section>
       </aside>
 
