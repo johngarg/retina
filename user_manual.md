@@ -7,6 +7,7 @@ Retina is a desktop application for managing patient records, retinal imaging vi
 The app is designed for a local workflow:
 
 - create a patient
+- edit patient details when needed
 - create a visit
 - import left and right retinal images from the computer
 - review visit history
@@ -22,6 +23,8 @@ This panel contains:
 
 - the patient search box
 - the patient list
+- the `Patient Details` panel for the selected patient
+- the `Patient Status` panel for archive/restore actions
 - the `New Patient` form
 - the `Backups` panel
 
@@ -86,6 +89,53 @@ The list shows:
 - gender if present
 
 Click a patient to load their record in the main workspace.
+
+By default, archived patients are hidden from the patient list.
+
+If you want to search archived patients too:
+
+1. Enable `Include archived patients in search`.
+2. Search or browse the patient list as usual.
+
+Archived patients are marked in the list.
+
+## Editing patient details
+
+After selecting a patient, use the `Patient Details` panel in the left column.
+
+You can update:
+
+- `First name`
+- `Last name`
+- `Date of birth`
+- `Gender`
+
+To save changes:
+
+1. Edit the fields in `Patient Details`.
+2. Click `Save patient details`.
+
+The app prevents you from saving a change that would create a duplicate active patient record.
+
+## Archiving and restoring a patient
+
+Use the `Patient Status` panel for archive actions.
+
+### Archive a patient
+
+1. Select the patient.
+2. In `Patient Status`, click `Archive patient`.
+3. Click `Confirm archive`.
+
+Archiving hides the patient from the default search, but keeps the record in the database.
+
+### Restore an archived patient
+
+1. Enable `Include archived patients in search`.
+2. Select the archived patient.
+3. In `Patient Status`, click `Unarchive patient`.
+
+If restoring the patient would create a duplicate active record, the app blocks the restore and shows a warning.
 
 ## Creating a visit
 

@@ -389,6 +389,18 @@ function App() {
   }, [selectedPatientId]);
 
   useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setNotice(null);
+    }, 4200);
+
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
+  useEffect(() => {
     if (!selectedPatient) {
       setPatientDraft(initialPatientForm);
       return;
@@ -730,6 +742,15 @@ function App() {
 
   return (
     <div className="app-shell">
+      {notice ? (
+        <div className={`notice-toast ${notice.tone}`} role="status" aria-live="polite">
+          <span>{notice.message}</span>
+          <button className="toast-close-button" type="button" onClick={() => setNotice(null)} aria-label="Dismiss message">
+            Close
+          </button>
+        </div>
+      ) : null}
+
       <aside className="sidebar">
         <div className="sidebar-top">
           <p className="eyebrow">Retina</p>
@@ -1027,7 +1048,6 @@ function App() {
             <div className={`connection-banner ${connectionOffline ? "offline" : ""}`}>
               {connectionMessage}
             </div>
-            {notice ? <div className={`notice-banner ${notice.tone}`}>{notice.message}</div> : null}
           </div>
         </div>
 

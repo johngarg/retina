@@ -17,6 +17,8 @@ Please see the [user manual](user_manual.md) for details on how to use the app.
 The app currently supports:
 
 - creating and searching patients
+- editing patient name, DOB, and gender
+- archiving patients and restoring archived patients
 - creating visits
 - importing left/right retinal images from the filesystem
 - viewing thumbnails and full-resolution images
@@ -26,6 +28,13 @@ The app currently supports:
 - audit logging for core create/edit/import/backup actions
 
 This is already usable as a developer-run prototype. It also now has a defined packaging path for macOS and Windows.
+
+Current patient-record behavior:
+
+- active patients are shown in the default search
+- archived patients are hidden unless the user enables archived search
+- archived patients can be restored from the patient status panel
+- patient create, edit, and unarchive operations all block duplicate active identities
 
 The current release path is:
 
