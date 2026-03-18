@@ -2,7 +2,7 @@
 
 Retina is a local-first desktop app for managing retinal-image patient records, visits, and imported eye images. 
 
-This is a modern rewrite of an older retinal workflow prototype, with the current focus on a maintainable local desktop app.
+This is a modern rewrite of an older retinal workflow prototype, with the current focus on a maintainable local desktop app. The legacy code is here: https://github.com/johngarg/racket-optical.
 
 The rewrite uses:
 
@@ -23,20 +23,7 @@ The app currently supports:
 - local backup export
 - audit logging for core create/edit/import/backup actions
 
-This is already usable as a developer-run prototype. It now has a defined packaging path for macOS and Windows, but code signing, notarization, and clean-machine installer validation still need to be completed before broad lay-person distribution.
-
-## Goal: installable by a lay-person user
-
-The target is that someone like your mum can install and run it without needing Python, Node, Rust, or terminal commands.
-
-That means the project still needs:
-
-- reliable packaged desktop builds for both macOS and Windows
-- Windows packaging validation
-- polished macOS app/distribution flow
-- installer-level testing on clean machines
-- user-facing installation instructions
-- likely code signing, and on macOS probably notarization, before broad real-world distribution
+This is already usable as a developer-run prototype. It now has a defined packaging path for macOS and Windows.
 
 The current release path is:
 
@@ -47,37 +34,30 @@ The current release path is:
 
 ## Installation
 
+Download the app from the [latest release](../../releases/latest).
+
 ### macOS
 
-1. Download the latest macOS release artifact:
+1. Open the [Releases page](../../releases/latest).
+2. Download the latest macOS release artifact:
    - `Retina.app.zip` for the simplest install path
    - or a `.dmg` if a DMG release is provided
-2. If you downloaded `Retina.app.zip`, unzip it.
-3. Move `Retina.app` into `Applications`.
-4. Open `Applications` and launch Retina.
+3. Unzip `Retina.app.zip`.
+4. Move `Retina.app` into `Applications`.
+5. Open `Applications` and launch Retina.
 
 If the app is not yet signed and notarized, macOS may warn that the app is from an unidentified developer. That is expected for pre-release or internal builds.
 
 ### Windows
 
-1. Download the latest Windows installer:
+1. Open the [Releases page](../../releases/latest).
+2. Download the latest Windows installer:
    - `Retina Setup ... .exe`
-2. Run the installer.
-3. Follow the installer prompts.
-4. Launch Retina from the Start menu or desktop shortcut.
+3. Run the installer.
+4. Follow the installer prompts.
+5. Launch Retina from the Start menu or desktop shortcut.
 
 If the app is not yet code-signed, Windows SmartScreen may warn before launch. That is expected for pre-release or internal builds.
-
-### What users do not need to install
-
-Users should not need to install:
-
-- Python
-- Node.js
-- Rust
-- SQLite
-
-Those are only needed by developers building the app from source.
 
 ## Repository layout
 
