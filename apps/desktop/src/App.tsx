@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 
 import {
   ApiError,
+  type PatientFilters,
   createPatient,
   createSession,
   describeApiError,
@@ -46,6 +47,12 @@ type ImageEditForm = {
 
 type EyeSide = "left" | "right";
 type EyeUploadForms = Record<EyeSide, UploadForm>;
+type SessionFilters = {
+  session_date_from: string;
+  session_date_to: string;
+  laterality: string;
+  image_type: string;
+};
 type BootState = "checking" | "starting" | "ready" | "error";
 type WorkspaceView = "sessions" | "viewer";
 type LoadStatus = "idle" | "loading" | "ready" | "error";
@@ -82,6 +89,13 @@ const makeUploadForm = (laterality: string): UploadForm => ({
 const initialEyeUploadForms = (): EyeUploadForms => ({
   left: makeUploadForm("left"),
   right: makeUploadForm("right"),
+});
+
+const initialSessionFilters = (): SessionFilters => ({
+  session_date_from: "",
+  session_date_to: "",
+  laterality: "",
+  image_type: "",
 });
 
 function buildSessionDraft(session: StudySession): SessionForm {
@@ -141,6 +155,25 @@ function otherImages(session: StudySession): RetinalImage[] {
   return session.images.filter((image) => image.laterality !== "left" && image.laterality !== "right");
 }
 
+function countImages(sessions: StudySession[]): number {
+  return sessions.reduce((total, session) => total + session.images.length, 0);
+}
+
+function normalizePatientFilters(filters: SessionFilters): PatientFilters {
+  return {
+    session_date_from: filters.session_date_from || undefined,
+    session_date_to: filters.session_date_to || undefined,
+    laterality: filters.laterality || undefined,
+    image_type: filters.image_type || undefined,
+  };
+}
+
+function hasActiveSessionFilters(filters: SessionFilters): boolean {
+  return Boolean(
+    filters.session_date_from || filters.session_date_to || filters.laterality || filters.image_type,
+  );
+}
+
 function isNetworkApiError(error: unknown): boolean {
   return error instanceof ApiError && error.kind === "network";
 }
@@ -151,6 +184,7 @@ function App() {
   const [selectedPatient, setSelectedPatient] = useState<PatientDetail | null>(null);
   const [selectedImage, setSelectedImage] = useState<RetinalImage | null>(null);
   const [search, setSearch] = useState("");
+  const [sessionFilters, setSessionFilters] = useState<SessionFilters>(initialSessionFilters);
   const [patientForm, setPatientForm] = useState<PatientForm>(initialPatientForm);
   const [sessionForm, setSessionForm] = useState<SessionForm>(initialSessionForm);
   const [sessionDrafts, setSessionDrafts] = useState<Record<string, SessionForm>>({});
@@ -211,10 +245,14 @@ function App() {
     }
   }
 
-  async function refreshPatient(patientId: string, preferredImageId?: string | null) {
+  async function refreshPatient(
+    patientId: string,
+    preferredImageId?: string | null,
+    filters: SessionFilters = sessionFilters,
+  ): Promise<boolean> {
     setPatientDetailState({ status: "loading", message: null });
     try {
-      const detail = await fetchPatient(patientId);
+      const detail = await fetchPatient(patientId, normalizePatientFilters(filters));
       setSelectedPatient(detail);
       setPatientDetailState({ status: "ready", message: null });
       setConnectionMessage("Local API connected.");
@@ -242,8 +280,10 @@ function App() {
         allImages[0] ??
         null;
       setSelectedImage(nextSelectedImage);
+      return true;
     } catch (err) {
       reportRequestFailure(err, "Unable to load patient detail", "detail");
+      return false;
     }
   }
 
@@ -312,7 +352,7 @@ function App() {
       setPatientDetailState({ status: "idle", message: null });
       return;
     }
-    void refreshPatient(selectedPatientId);
+    void refreshPatient(selectedPatientId, undefined, sessionFilters);
   }, [bootState, selectedPatientId]);
 
   useEffect(() => {
@@ -348,10 +388,12 @@ function App() {
     try {
       const created = await createSession(selectedPatientId, sessionForm);
       setSessionForm(initialSessionForm());
-      await refreshPatient(selectedPatientId);
-      setSessionUploads((current) => ({ ...current, [created.id]: initialEyeUploadForms() }));
-      reportRequestSuccess("Session created.");
-      setWorkspaceView("sessions");
+      const refreshed = await refreshPatient(selectedPatientId);
+      if (refreshed) {
+        setSessionUploads((current) => ({ ...current, [created.id]: initialEyeUploadForms() }));
+        reportRequestSuccess("Session created.");
+        setWorkspaceView("sessions");
+      }
     } catch (err) {
       reportRequestFailure(err, "Unable to create session", "notice");
     }
@@ -371,8 +413,9 @@ function App() {
     setNotice(null);
     try {
       await updateSession(sessionId, draft);
-      await refreshPatient(selectedPatientId, selectedImage?.id ?? null);
-      reportRequestSuccess("Session details saved.");
+      if (await refreshPatient(selectedPatientId, selectedImage?.id ?? null)) {
+        reportRequestSuccess("Session details saved.");
+      }
     } catch (err) {
       reportRequestFailure(err, "Unable to update session", "notice");
     }
@@ -396,9 +439,10 @@ function App() {
           [eye]: makeUploadForm(eye),
         },
       }));
-      await refreshPatient(selectedPatientId);
-      reportRequestSuccess(`${eye === "left" ? "Left" : "Right"} eye image imported.`);
-      setWorkspaceView("viewer");
+      if (await refreshPatient(selectedPatientId)) {
+        reportRequestSuccess(`${eye === "left" ? "Left" : "Right"} eye image imported.`);
+        setWorkspaceView("viewer");
+      }
     } catch (err) {
       reportRequestFailure(err, `Unable to import ${eye} eye image`, "notice");
     }
@@ -423,8 +467,9 @@ function App() {
         captured_at: draft.captured_at || null,
         notes: draft.notes,
       });
-      await refreshPatient(selectedPatientId, selectedImage.id);
-      reportRequestSuccess("Image metadata saved.");
+      if (await refreshPatient(selectedPatientId, selectedImage.id)) {
+        reportRequestSuccess("Image metadata saved.");
+      }
     } catch (err) {
       reportRequestFailure(err, "Unable to update image metadata", "notice");
     }
@@ -468,6 +513,32 @@ function App() {
     }));
   }
 
+  async function onApplySessionFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedPatientId) {
+      return;
+    }
+
+    setNotice(null);
+    if (await refreshPatient(selectedPatientId, selectedImage?.id ?? null, sessionFilters)) {
+      reportRequestSuccess("History filters applied.");
+      setWorkspaceView("sessions");
+    }
+  }
+
+  async function onClearSessionFilters() {
+    const cleared = initialSessionFilters();
+    setSessionFilters(cleared);
+    if (!selectedPatientId) {
+      return;
+    }
+
+    setNotice(null);
+    if (await refreshPatient(selectedPatientId, selectedImage?.id ?? null, cleared)) {
+      reportRequestSuccess("History filters cleared.");
+    }
+  }
+
   if (bootState !== "ready") {
     return (
       <div className="startup-shell">
@@ -495,6 +566,10 @@ function App() {
   const connectionOffline =
     connectionMessage !== "Local API connected." &&
     connectionMessage !== "Checking local API availability...";
+  const activeHistoryFilters = hasActiveSessionFilters(sessionFilters);
+  const sessionCount = selectedPatient?.sessions.length ?? 0;
+  const imageCount = countImages(selectedPatient?.sessions ?? []);
+  const historyImages = selectedPatient?.sessions.flatMap((session) => session.images) ?? [];
 
   return (
     <div className="app-shell">
@@ -517,7 +592,8 @@ function App() {
           <input
             className="text-input"
             value={search}
-            placeholder="Search by name or legacy ID"
+            placeholder="Search by first/last name or legacy ID"
+            aria-label="Patient search"
             onChange={(event) => setSearch(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -613,7 +689,7 @@ function App() {
             <h2>{selectedPatient ? selectedPatient.display_name : "Select a patient"}</h2>
             <p className="muted">
               {selectedPatient
-                ? `DOB ${selectedPatient.date_of_birth}${selectedPatient.gender_text ? ` • ${selectedPatient.gender_text}` : ""}`
+                ? `DOB ${selectedPatient.date_of_birth}${selectedPatient.gender_text ? ` • ${selectedPatient.gender_text}` : ""} • ${sessionCount} session(s) • ${imageCount} image(s)`
                 : "Create a patient on the left or choose one from the list."}
             </p>
           </div>
@@ -650,6 +726,108 @@ function App() {
 
             {selectedPatient ? (
               <>
+                <form className="history-filter-form" onSubmit={onApplySessionFilters}>
+                  <div className="panel-header">
+                    <div>
+                      <h3>History Filters</h3>
+                      <p className="muted">
+                        Narrow the session timeline by date, eye laterality, or capture type.
+                      </p>
+                    </div>
+                    <span className="session-count">
+                      Showing {sessionCount} session(s) • {imageCount} image(s)
+                    </span>
+                  </div>
+                  <div className="filter-grid">
+                    <label className="field-group">
+                      <span>Date from</span>
+                      <input
+                        className="text-input"
+                        type="date"
+                        aria-label="History date from"
+                        value={sessionFilters.session_date_from}
+                        onChange={(event) =>
+                          setSessionFilters((current) => ({
+                            ...current,
+                            session_date_from: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="field-group">
+                      <span>Date to</span>
+                      <input
+                        className="text-input"
+                        type="date"
+                        aria-label="History date to"
+                        value={sessionFilters.session_date_to}
+                        onChange={(event) =>
+                          setSessionFilters((current) => ({
+                            ...current,
+                            session_date_to: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="field-group">
+                      <span>Laterality</span>
+                      <select
+                        className="text-input"
+                        aria-label="History laterality"
+                        value={sessionFilters.laterality}
+                        onChange={(event) =>
+                          setSessionFilters((current) => ({
+                            ...current,
+                            laterality: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">All laterality</option>
+                        <option value="left">Left eye</option>
+                        <option value="right">Right eye</option>
+                        <option value="both">Both</option>
+                        <option value="unknown">Unknown</option>
+                      </select>
+                    </label>
+                    <label className="field-group">
+                      <span>Image type</span>
+                      <select
+                        className="text-input"
+                        aria-label="History image type"
+                        value={sessionFilters.image_type}
+                        onChange={(event) =>
+                          setSessionFilters((current) => ({
+                            ...current,
+                            image_type: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">All image types</option>
+                        <option value="color_fundus">Color fundus</option>
+                        <option value="red_free">Red-free</option>
+                        <option value="fluorescein">Fluorescein</option>
+                        <option value="autofluorescence">Autofluorescence</option>
+                        <option value="oct">OCT</option>
+                        <option value="external_photo">External photo</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="filter-actions">
+                    <button className="primary-button" type="submit">
+                      Apply history filters
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => void onClearSessionFilters()}
+                      disabled={!activeHistoryFilters}
+                    >
+                      Clear filters
+                    </button>
+                  </div>
+                </form>
+
                 <form className="session-form" onSubmit={onCreateSession}>
                   <input
                     className="text-input"
@@ -694,8 +872,12 @@ function App() {
                 ) : null}
                 {patientDetailState.status === "ready" && selectedPatient.sessions.length === 0 ? (
                   <div className="inline-state">
-                    <p>No sessions yet.</p>
-                    <span className="muted">Create one to start a bilateral capture session.</span>
+                    <p>{activeHistoryFilters ? "No sessions match the active filters." : "No sessions yet."}</p>
+                    <span className="muted">
+                      {activeHistoryFilters
+                        ? "Clear or adjust the filters to review more of the patient history."
+                        : "Create one to start a bilateral capture session."}
+                    </span>
                   </div>
                 ) : null}
 
@@ -715,6 +897,7 @@ function App() {
                             <p className="muted">
                               {session.operator_name ? `${session.operator_name} • ` : ""}
                               {session.status}
+                              {session.legacy_visit_id ? ` • Legacy visit ${session.legacy_visit_id}` : ""}
                             </p>
                           </div>
                           <span className="session-count">{session.images.length} image(s)</span>
@@ -909,6 +1092,34 @@ function App() {
                       : ""}
                   </p>
                 </div>
+
+                {historyImages.length > 0 ? (
+                  <div className="viewer-history">
+                    <div className="panel-header">
+                      <div>
+                        <h3>Filtered History</h3>
+                        <p className="muted">
+                          Quick review of the current patient timeline{activeHistoryFilters ? " with filters applied" : ""}.
+                        </p>
+                      </div>
+                      <span className="session-count">{historyImages.length} image(s)</span>
+                    </div>
+                    <div className="history-strip" role="list" aria-label="Filtered image history">
+                      {historyImages.map((image) => (
+                        <button
+                          key={image.id}
+                          type="button"
+                          role="listitem"
+                          className={`history-thumb ${selectedImage.id === image.id ? "active" : ""}`}
+                          onClick={() => setSelectedImage(image)}
+                        >
+                          <img src={imageThumbnailUrl(image.id)} alt={image.original_filename} loading="lazy" />
+                          <span>{image.laterality}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 <form className="viewer-form" onSubmit={(event) => void onSaveImage(event)}>
                   <div className="viewer-form-grid">

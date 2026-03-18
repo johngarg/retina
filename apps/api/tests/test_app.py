@@ -50,11 +50,11 @@ def create_patient() -> dict:
     return response.json()
 
 
-def create_session(patient_id: str) -> dict:
+def create_session(patient_id: str, *, session_date: str | None = None) -> dict:
     response = client.post(
         f"/patients/{patient_id}/sessions",
         json={
-            "session_date": str(date.today()),
+            "session_date": session_date or str(date.today()),
             "operator_name": "Operator One",
             "notes": "Initial intake",
         },
@@ -215,6 +215,71 @@ def test_duplicate_patient_conflict() -> None:
     assert response.status_code == 409
 
 
+def test_patient_search_matches_first_last_tokens_and_legacy_id() -> None:
+    patient = create_patient()
+
+    with SessionLocal() as session:
+        db_patient = session.get(Patient, patient["id"])
+        assert db_patient is not None
+        db_patient.legacy_patient_id = 551234
+        session.commit()
+
+    response = client.get("/patients", params={"q": "Ada Lovelace"})
+    assert response.status_code == 200
+    assert any(result["id"] == patient["id"] for result in response.json())
+
+    response = client.get("/patients", params={"q": "Lovelace Ada"})
+    assert response.status_code == 200
+    assert any(result["id"] == patient["id"] for result in response.json())
+
+    response = client.get("/patients", params={"q": "551234"})
+    assert response.status_code == 200
+    assert any(result["id"] == patient["id"] for result in response.json())
+
+
+def test_patient_detail_filters_sessions_and_images() -> None:
+    patient = create_patient()
+    first_session = create_session(patient["id"], session_date="2026-03-10")
+    second_session = create_session(patient["id"], session_date="2026-03-15")
+
+    import_test_image(first_session["id"], laterality="left", image_type="color_fundus")
+    import_test_image(first_session["id"], laterality="right", image_type="red_free")
+    import_test_image(second_session["id"], laterality="left", image_type="red_free")
+
+    response = client.get(
+        f"/patients/{patient['id']}",
+        params={
+            "session_date_from": "2026-03-12",
+            "laterality": "left",
+            "image_type": "red_free",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [session["id"] for session in body["sessions"]] == [second_session["id"]]
+    assert len(body["sessions"][0]["images"]) == 1
+    assert body["sessions"][0]["images"][0]["laterality"] == "left"
+    assert body["sessions"][0]["images"][0]["image_type"] == "red_free"
+
+    response = client.get(
+        f"/patients/{patient['id']}/sessions",
+        params={"laterality": "right"},
+    )
+    assert response.status_code == 200
+    sessions = response.json()
+    assert [session["id"] for session in sessions] == [first_session["id"]]
+    assert len(sessions[0]["images"]) == 1
+    assert sessions[0]["images"][0]["laterality"] == "right"
+
+
+def test_invalid_patient_filter_is_rejected() -> None:
+    patient = create_patient()
+
+    response = client.get(f"/patients/{patient['id']}", params={"laterality": "temporal"})
+    assert response.status_code == 400
+    assert "laterality" in response.json()["detail"]
+
+
 def test_invalid_laterality_is_rejected() -> None:
     patient = create_patient()
     session_obj = create_session(patient["id"])
@@ -343,7 +408,7 @@ def test_legacy_import_reports_missing_assets_and_is_idempotent() -> None:
     with SessionLocal() as session:
         patients = list(
             session.query(Patient)
-            .filter(Patient.legacy_patient_id.is_not(None))
+            .filter(Patient.legacy_patient_id.in_([1001, 1002]))
             .order_by(Patient.legacy_patient_id)
         )
         sessions = list(
@@ -378,7 +443,7 @@ def test_legacy_import_reports_missing_assets_and_is_idempotent() -> None:
     assert rerun.images_reused == 2
 
     with SessionLocal() as session:
-        assert session.query(Patient).filter(Patient.legacy_patient_id.is_not(None)).count() == 2
+        assert session.query(Patient).filter(Patient.legacy_patient_id.in_([1001, 1002])).count() == 2
         assert session.query(StudySession).filter(StudySession.legacy_visit_id.is_not(None)).count() == 3
         assert session.query(RetinalImage).filter(RetinalImage.legacy_visit_id.is_not(None)).count() == 2
 

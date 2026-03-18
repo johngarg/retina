@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -8,10 +8,11 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from .config import DATA_DIR, ensure_app_dirs
+from .constants import IMAGE_TYPE_VALUES, LATERALITY_VALUES
 from .database import SessionLocal, get_db
 from .maintenance import backfill_missing_thumbnails
 from .migrations import run_migrations
@@ -20,6 +21,7 @@ from .schemas import (
     HealthResponse,
     ImageDetail,
     ImageImportForm,
+    ImageSummary,
     ImageUpdate,
     PatientCreate,
     PatientDetail,
@@ -61,6 +63,86 @@ def patient_query() -> select:
     return select(Patient).options(
         selectinload(Patient.sessions).selectinload(StudySession.images)
     )
+
+
+def normalize_optional_filter(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def validate_optional_choice(name: str, value: str | None, allowed_values: tuple[str, ...]) -> str | None:
+    normalized = normalize_optional_filter(value)
+    if normalized is None:
+        return None
+    if normalized not in allowed_values:
+        allowed_text = ", ".join(allowed_values)
+        raise HTTPException(status_code=400, detail=f"{name} must be one of: {allowed_text}")
+    return normalized
+
+
+def filtered_images(
+    session_obj: StudySession,
+    *,
+    laterality: str | None,
+    image_type: str | None,
+) -> list[RetinalImage]:
+    return [
+        image
+        for image in session_obj.images
+        if (laterality is None or image.laterality == laterality)
+        and (image_type is None or image.image_type == image_type)
+    ]
+
+
+def filtered_session_summaries(
+    patient: Patient,
+    *,
+    session_date_from: date | None,
+    session_date_to: date | None,
+    laterality: str | None,
+    image_type: str | None,
+) -> list[SessionSummary]:
+    filtered_sessions: list[SessionSummary] = []
+    image_filters_active = laterality is not None or image_type is not None
+
+    for session_obj in patient.sessions:
+        if session_date_from and session_obj.session_date < session_date_from:
+            continue
+        if session_date_to and session_obj.session_date > session_date_to:
+            continue
+
+        matching_images = filtered_images(session_obj, laterality=laterality, image_type=image_type)
+        if image_filters_active and not matching_images:
+            continue
+
+        session_summary = SessionSummary.model_validate(session_obj, from_attributes=True)
+        session_summary.images = [
+            ImageSummary.model_validate(image, from_attributes=True) for image in matching_images
+        ]
+        filtered_sessions.append(session_summary)
+
+    return filtered_sessions
+
+
+def patient_detail_response(
+    patient: Patient,
+    *,
+    session_date_from: date | None,
+    session_date_to: date | None,
+    laterality: str | None,
+    image_type: str | None,
+) -> PatientDetail:
+    detail = PatientDetail.model_validate(patient, from_attributes=True)
+    detail.sessions = filtered_session_summaries(
+        patient,
+        session_date_from=session_date_from,
+        session_date_to=session_date_to,
+        laterality=laterality,
+        image_type=image_type,
+    )
+    return detail
 
 
 def get_patient_or_404(db: Session, patient_id: str) -> Patient:
@@ -105,11 +187,20 @@ def list_patients(
 ) -> list[Patient]:
     stmt = select(Patient).where(Patient.archived_at.is_(None))
     if q:
-        like = f"%{q.strip().upper()}%"
-        conditions = [func.upper(Patient.display_name).like(like)]
-        if q.strip().isdigit():
-            conditions.append(cast(Patient.legacy_patient_id, String).like(f"%{q.strip()}%"))
-        stmt = stmt.where(or_(*conditions))
+        tokens = [token.upper() for token in q.replace(",", " ").split() if token.strip()]
+        token_conditions = []
+        for token in tokens:
+            like = f"%{token}%"
+            conditions = [
+                Patient.normalized_first_name.like(like),
+                Patient.normalized_last_name.like(like),
+                func.upper(Patient.display_name).like(like),
+            ]
+            if token.isdigit():
+                conditions.append(cast(Patient.legacy_patient_id, String).like(f"%{token}%"))
+            token_conditions.append(or_(*conditions))
+        if token_conditions:
+            stmt = stmt.where(and_(*token_conditions))
     stmt = stmt.order_by(Patient.last_name.asc(), Patient.first_name.asc())
     return list(db.scalars(stmt))
 
@@ -150,14 +241,61 @@ def create_patient(payload: PatientCreate, db: Session = Depends(get_db)) -> Pat
 
 
 @app.get("/patients/{patient_id}", response_model=PatientDetail)
-def get_patient(patient_id: str, db: Session = Depends(get_db)) -> Patient:
-    return get_patient_or_404(db, patient_id)
+def get_patient(
+    patient_id: str,
+    session_date_from: date | None = Query(default=None),
+    session_date_to: date | None = Query(default=None),
+    laterality: str | None = Query(default=None),
+    image_type: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> PatientDetail:
+    patient = get_patient_or_404(db, patient_id)
+    normalized_laterality = validate_optional_choice(
+        "laterality",
+        laterality,
+        LATERALITY_VALUES,
+    )
+    normalized_image_type = validate_optional_choice(
+        "image_type",
+        image_type,
+        IMAGE_TYPE_VALUES,
+    )
+    return patient_detail_response(
+        patient,
+        session_date_from=session_date_from,
+        session_date_to=session_date_to,
+        laterality=normalized_laterality,
+        image_type=normalized_image_type,
+    )
 
 
 @app.get("/patients/{patient_id}/sessions", response_model=list[SessionSummary])
-def list_patient_sessions(patient_id: str, db: Session = Depends(get_db)) -> list[StudySession]:
+def list_patient_sessions(
+    patient_id: str,
+    session_date_from: date | None = Query(default=None),
+    session_date_to: date | None = Query(default=None),
+    laterality: str | None = Query(default=None),
+    image_type: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[SessionSummary]:
     patient = get_patient_or_404(db, patient_id)
-    return patient.sessions
+    normalized_laterality = validate_optional_choice(
+        "laterality",
+        laterality,
+        LATERALITY_VALUES,
+    )
+    normalized_image_type = validate_optional_choice(
+        "image_type",
+        image_type,
+        IMAGE_TYPE_VALUES,
+    )
+    return filtered_session_summaries(
+        patient,
+        session_date_from=session_date_from,
+        session_date_to=session_date_to,
+        laterality=normalized_laterality,
+        image_type=normalized_image_type,
+    )
 
 
 @app.post("/patients/{patient_id}/sessions", response_model=SessionSummary, status_code=201)

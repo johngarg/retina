@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, createPatient, describeApiError, fetchHealth } from "./api";
+import { ApiError, createPatient, describeApiError, fetchHealth, fetchPatient } from "./api";
 
 vi.mock("./tauri", () => ({
   isTauriRuntime: () => false,
@@ -54,6 +54,43 @@ describe("api client", () => {
 
     expect(describeApiError(error, "Unable to load patients")).toContain(
       "Check that the local API is running",
+    );
+  });
+
+  it("builds patient filter query strings for filtered detail requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "patient-1",
+          legacy_patient_id: null,
+          first_name: "Ada",
+          last_name: "Lovelace",
+          display_name: "Lovelace, Ada",
+          date_of_birth: "1815-12-10",
+          gender_text: "F",
+          archived_at: null,
+          created_at: "2026-03-18T00:00:00Z",
+          updated_at: "2026-03-18T00:00:00Z",
+          sessions: [],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchPatient("patient-1", {
+      session_date_from: "2026-03-01",
+      session_date_to: "2026-03-31",
+      laterality: "left",
+      image_type: "color_fundus",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/patients/patient-1?session_date_from=2026-03-01&session_date_to=2026-03-31&laterality=left&image_type=color_fundus",
+      expect.any(Object),
     );
   });
 });

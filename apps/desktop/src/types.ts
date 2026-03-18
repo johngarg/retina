@@ -34,6 +34,7 @@ export type RetinalImage = {
 export type StudySession = {
   id: string;
   patient_id: string;
+  legacy_visit_id?: number | null;
   session_date: string;
   captured_at: string | null;
   operator_name: string | null;

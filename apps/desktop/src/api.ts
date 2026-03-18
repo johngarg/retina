@@ -20,6 +20,13 @@ type ErrorPayload = {
   message?: string;
 };
 
+export type PatientFilters = {
+  session_date_from?: string;
+  session_date_to?: string;
+  laterality?: string;
+  image_type?: string;
+};
+
 export class ApiError extends Error {
   kind: ApiErrorKind;
   status: number | null;
@@ -48,6 +55,17 @@ export class ApiError extends Error {
 
 function apiBaseUrl(): string {
   return isTauriRuntime() ? "http://127.0.0.1:8000" : "/api";
+}
+
+function buildQueryString(params: Record<string, string | undefined>): string {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value && value.trim()) {
+      searchParams.set(key, value.trim());
+    }
+  }
+  const query = searchParams.toString();
+  return query ? `?${query}` : "";
 }
 
 function normalizeErrorPayload(data: unknown): string | null {
@@ -144,7 +162,7 @@ export function describeApiError(error: unknown, action: string): string {
 }
 
 export async function fetchPatients(query = ""): Promise<PatientSummary[]> {
-  const search = query ? `?q=${encodeURIComponent(query)}` : "";
+  const search = buildQueryString({ q: query });
   return request<PatientSummary[]>(`/patients${search}`);
 }
 
@@ -163,8 +181,11 @@ export async function createPatient(input: {
   });
 }
 
-export async function fetchPatient(patientId: string): Promise<PatientDetail> {
-  return request<PatientDetail>(`/patients/${patientId}`);
+export async function fetchPatient(
+  patientId: string,
+  filters: PatientFilters = {},
+): Promise<PatientDetail> {
+  return request<PatientDetail>(`/patients/${patientId}${buildQueryString(filters)}`);
 }
 
 export async function createSession(

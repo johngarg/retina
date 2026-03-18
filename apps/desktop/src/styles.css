@@ -176,6 +176,12 @@ button {
   margin: 0.25rem 0 0;
 }
 
+.viewer-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
 .viewer-form {
   display: flex;
   flex-direction: column;
@@ -184,7 +190,8 @@ button {
 
 .viewer-form-grid,
 .session-meta-grid,
-.bilateral-grid {
+.bilateral-grid,
+.filter-grid {
   display: grid;
   gap: 0.75rem;
 }
@@ -196,6 +203,10 @@ button {
 
 .bilateral-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.filter-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .text-input {
@@ -218,6 +229,7 @@ button {
 
 .stack,
 .session-form,
+.history-filter-form,
 .upload-form,
 .session-list,
 .viewer-meta,
@@ -227,6 +239,18 @@ button {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.92rem;
+  color: #405961;
+}
+
+.field-group span {
+  font-weight: 600;
 }
 
 .patient-list {
@@ -279,6 +303,11 @@ button {
   border: 0;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .primary-button {
   background: linear-gradient(135deg, #145e63, #2e8790);
   color: white;
@@ -301,6 +330,13 @@ button {
   border-radius: 20px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(241, 247, 244, 0.9));
   border: 1px solid rgba(18, 32, 42, 0.08);
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
 }
 
 .eye-column {
@@ -354,6 +390,37 @@ button {
   flex-direction: column;
   gap: 0.35rem;
   padding: 0.75rem;
+}
+
+.history-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 0.65rem;
+}
+
+.history-thumb {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.5rem;
+  border-radius: 16px;
+  border: 1px solid rgba(18, 32, 42, 0.08);
+  background: rgba(247, 249, 247, 0.95);
+  text-transform: capitalize;
+}
+
+.history-thumb img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 12px;
+  background: #d7e1de;
+}
+
+.history-thumb.active {
+  border-color: rgba(25, 101, 107, 0.45);
+  box-shadow: 0 12px 24px rgba(25, 101, 107, 0.12);
 }
 
 .badge {
@@ -447,6 +514,10 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .viewer-panel {
     position: static;
     max-height: none;
@@ -468,7 +539,8 @@ button {
   }
 
   .viewer-form-grid,
-  .session-meta-grid {
+  .session-meta-grid,
+  .filter-grid {
     grid-template-columns: 1fr;
   }
 
