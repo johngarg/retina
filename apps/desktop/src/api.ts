@@ -22,6 +22,7 @@ type HealthCheckResult = {
   error: ApiError | null;
   backupRestore: boolean;
   patientArchive: boolean;
+  patientEdit: boolean;
 };
 
 type ErrorPayload = {
@@ -198,6 +199,40 @@ export async function createPatient(input: {
   });
 }
 
+export async function updatePatient(
+  patientId: string,
+  input: {
+    first_name: string;
+    last_name: string;
+    date_of_birth: string;
+    gender_text: string;
+  },
+): Promise<PatientSummary> {
+  try {
+    return await request<PatientSummary>(`/patients/${patientId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    });
+  } catch (error) {
+    const apiError = buildRequestError(error);
+    if (apiError.status === 404) {
+      const health = await fetchHealth();
+      if (health.ok && !health.patientEdit) {
+        throw new ApiError({
+          kind: "http",
+          status: 409,
+          detail: "An older Retina backend is already running on port 8000. Restart Retina and retry patient editing.",
+          retryable: true,
+        });
+      }
+    }
+    throw apiError;
+  }
+}
+
 export async function archivePatient(patientId: string): Promise<PatientSummary> {
   try {
     return await request<PatientSummary>(`/patients/${patientId}/archive`, {
@@ -372,13 +407,20 @@ export async function fetchHealth(): Promise<HealthCheckResult> {
   try {
     const response = await fetch(`${apiBaseUrl()}/health`, { headers: baseHeaders });
     if (!response.ok) {
-      return { ok: false, error: await buildHttpError(response), backupRestore: false, patientArchive: false };
+      return {
+        ok: false,
+        error: await buildHttpError(response),
+        backupRestore: false,
+        patientArchive: false,
+        patientEdit: false,
+      };
     }
 
     const data = (await response.json()) as {
       status?: string;
       backup_restore?: boolean;
       patient_archive?: boolean;
+      patient_edit?: boolean;
     };
     if (data.status !== "ok") {
       return {
@@ -390,6 +432,7 @@ export async function fetchHealth(): Promise<HealthCheckResult> {
         }),
         backupRestore: false,
         patientArchive: false,
+        patientEdit: false,
       };
     }
     return {
@@ -397,9 +440,16 @@ export async function fetchHealth(): Promise<HealthCheckResult> {
       error: null,
       backupRestore: data.backup_restore === true,
       patientArchive: data.patient_archive === true,
+      patientEdit: data.patient_edit === true,
     };
   } catch (error) {
-    return { ok: false, error: buildRequestError(error), backupRestore: false, patientArchive: false };
+    return {
+      ok: false,
+      error: buildRequestError(error),
+      backupRestore: false,
+      patientArchive: false,
+      patientEdit: false,
+    };
   }
 }
 

@@ -9,6 +9,7 @@ import {
   fetchHealth,
   fetchPatient,
   fetchPatients,
+  updatePatient,
 } from "./api";
 
 vi.mock("./tauri", () => ({
@@ -54,6 +55,7 @@ describe("api client", () => {
     expect(result.error?.status).toBe(503);
     expect(result.backupRestore).toBe(false);
     expect(result.patientArchive).toBe(false);
+    expect(result.patientEdit).toBe(false);
   });
 
   it("maps network errors to actionable messages", () => {
@@ -162,6 +164,38 @@ describe("api client", () => {
     await expect(archivePatient("patient-1")).rejects.toMatchObject({
       name: "ApiError",
       detail: "An older Retina backend is already running on port 8000. Restart Retina and retry patient archiving.",
+    });
+  });
+
+  it("explains when an older backend is missing patient edit routes", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "Not Found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: "ok", backup_restore: true, patient_archive: true, patient_edit: false }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      updatePatient("patient-1", {
+        first_name: "Ada",
+        last_name: "Lovelace",
+        date_of_birth: "1815-12-10",
+        gender_text: "F",
+      }),
+    ).rejects.toMatchObject({
+      name: "ApiError",
+      detail: "An older Retina backend is already running on port 8000. Restart Retina and retry patient editing.",
     });
   });
 });

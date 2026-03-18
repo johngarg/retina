@@ -32,6 +32,7 @@ from .schemas import (
     PatientCreate,
     PatientDetail,
     PatientSummary,
+    PatientUpdate,
     RestoreSummary,
     SessionCreate,
     SessionSummary,
@@ -214,6 +215,7 @@ def health() -> HealthResponse:
         version=APP_VERSION,
         backup_restore=True,
         patient_archive=True,
+        patient_edit=True,
     )
 
 
@@ -313,6 +315,40 @@ def create_patient(payload: PatientCreate, db: Session = Depends(get_db)) -> Pat
             "gender_text": gender_text,
         },
     )
+    db.commit()
+    db.refresh(patient)
+    return patient
+
+
+@app.patch("/patients/{patient_id}", response_model=PatientSummary)
+def update_patient(
+    patient_id: str,
+    payload: PatientUpdate,
+    db: Session = Depends(get_db),
+) -> Patient:
+    patient = get_patient_or_404(db, patient_id, include_archived=True)
+    first_name = normalize_name(payload.first_name)
+    last_name = normalize_name(payload.last_name)
+    gender_text = normalize_upper(payload.gender_text) if payload.gender_text else None
+
+    existing = find_active_patient_identity_match(
+        db,
+        first_name=first_name,
+        last_name=last_name,
+        date_of_birth=payload.date_of_birth,
+        gender_text=gender_text,
+        exclude_patient_id=patient.id,
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Patient already exists")
+
+    patient.first_name = first_name
+    patient.last_name = last_name
+    patient.normalized_first_name = normalize_upper(first_name)
+    patient.normalized_last_name = normalize_upper(last_name)
+    patient.display_name = f"{last_name}, {first_name}"
+    patient.date_of_birth = payload.date_of_birth
+    patient.gender_text = gender_text
     db.commit()
     db.refresh(patient)
     return patient

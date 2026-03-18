@@ -222,6 +222,54 @@ def test_duplicate_patient_conflict() -> None:
     assert response.status_code == 409
 
 
+def test_patient_can_be_updated() -> None:
+    patient = create_patient()
+
+    response = client.patch(
+        f"/patients/{patient['id']}",
+        json={
+            "first_name": "Augusta Ada",
+            "last_name": "King",
+            "date_of_birth": "1815-12-10",
+            "gender_text": "X",
+        },
+    )
+    assert response.status_code == 200
+    updated = response.json()
+    assert updated["first_name"] == "Augusta Ada"
+    assert updated["last_name"] == "King"
+    assert updated["display_name"] == "King, Augusta Ada"
+    assert updated["gender_text"] == "X"
+
+
+def test_patient_update_rejects_duplicate_active_identity() -> None:
+    archived_patient = create_patient()
+
+    response = client.patch(
+        f"/patients/{archived_patient['id']}",
+        json={
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "date_of_birth": "1815-12-10",
+            "gender_text": "F",
+        },
+    )
+    assert response.status_code == 200
+
+    other = create_patient()
+
+    response = client.patch(
+        f"/patients/{other['id']}",
+        json={
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "date_of_birth": "1815-12-10",
+            "gender_text": "F",
+        },
+    )
+    assert response.status_code == 409
+
+
 def test_archived_patient_is_hidden_from_active_queries() -> None:
     patient = create_patient()
 

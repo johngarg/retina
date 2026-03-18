@@ -23,6 +23,10 @@ class PatientCreate(BaseModel):
         return normalized
 
 
+class PatientUpdate(PatientCreate):
+    pass
+
+
 class PatientSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -125,6 +129,7 @@ class HealthResponse(BaseModel):
     version: str
     backup_restore: bool
     patient_archive: bool
+    patient_edit: bool
 
 
 class BackupSummary(BaseModel):

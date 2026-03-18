@@ -18,6 +18,7 @@ import {
   restoreBackup,
   unarchivePatient,
   updateImage,
+  updatePatient,
   updateSession,
 } from "./api";
 import { ensureBackendStarted, isTauriRuntime, waitForBackendHealth } from "./tauri";
@@ -190,6 +191,7 @@ function App() {
   const [includeArchivedPatients, setIncludeArchivedPatients] = useState(false);
   const [sessionFilters, setSessionFilters] = useState<SessionFilters>(initialSessionFilters);
   const [patientForm, setPatientForm] = useState<PatientForm>(initialPatientForm);
+  const [patientDraft, setPatientDraft] = useState<PatientForm>(initialPatientForm);
   const [sessionForm, setSessionForm] = useState<SessionForm>(initialSessionForm);
   const [sessionDrafts, setSessionDrafts] = useState<Record<string, SessionForm>>({});
   const [sessionUploads, setSessionUploads] = useState<Record<string, EyeUploadForms>>({});
@@ -386,6 +388,19 @@ function App() {
     setArchiveConfirmPatientId(null);
   }, [selectedPatientId]);
 
+  useEffect(() => {
+    if (!selectedPatient) {
+      setPatientDraft(initialPatientForm);
+      return;
+    }
+    setPatientDraft({
+      first_name: selectedPatient.first_name,
+      last_name: selectedPatient.last_name,
+      date_of_birth: selectedPatient.date_of_birth,
+      gender_text: selectedPatient.gender_text ?? "",
+    });
+  }, [selectedPatient]);
+
   async function onCreatePatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setNotice(null);
@@ -417,6 +432,24 @@ function App() {
       }
     } catch (err) {
       reportRequestFailure(err, "Unable to create session", "notice");
+    }
+  }
+
+  async function onSavePatient(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedPatientId) {
+      return;
+    }
+
+    setNotice(null);
+    try {
+      await updatePatient(selectedPatientId, patientDraft);
+      await refreshPatients(search, selectedPatientId);
+      if (await refreshPatient(selectedPatientId, selectedImage?.id ?? null)) {
+        reportRequestSuccess("Patient details saved.");
+      }
+    } catch (err) {
+      reportRequestFailure(err, "Unable to update patient", "notice");
     }
   }
 
@@ -776,6 +809,70 @@ function App() {
             ))}
           </div>
         </section>
+
+        {selectedPatient ? (
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Patient Details</h2>
+            </div>
+            <form className="stack" onSubmit={onSavePatient}>
+              <label className="field-group">
+                <span>First name</span>
+                <input
+                  className="text-input"
+                  value={patientDraft.first_name}
+                  onChange={(event) =>
+                    setPatientDraft((current) => ({ ...current, first_name: event.target.value }))
+                  }
+                  required
+                />
+              </label>
+              <label className="field-group">
+                <span>Last name</span>
+                <input
+                  className="text-input"
+                  value={patientDraft.last_name}
+                  onChange={(event) =>
+                    setPatientDraft((current) => ({ ...current, last_name: event.target.value }))
+                  }
+                  required
+                />
+              </label>
+              <label className="field-group">
+                <span>Date of birth</span>
+                <input
+                  className="text-input"
+                  type="date"
+                  value={patientDraft.date_of_birth}
+                  onChange={(event) =>
+                    setPatientDraft((current) => ({ ...current, date_of_birth: event.target.value }))
+                  }
+                  required
+                />
+              </label>
+              <label className="field-group">
+                <span>Gender</span>
+                <select
+                  className="text-input"
+                  value={patientDraft.gender_text}
+                  onChange={(event) =>
+                    setPatientDraft((current) => ({ ...current, gender_text: event.target.value }))
+                  }
+                >
+                  <option value="F">F</option>
+                  <option value="M">M</option>
+                  <option value="X">X</option>
+                  <option value="">Unspecified</option>
+                </select>
+              </label>
+              <div className="action-row">
+                <button className="primary-button" type="submit">
+                  Save patient details
+                </button>
+              </div>
+            </form>
+          </section>
+        ) : null}
 
         {selectedPatient ? (
           <section className="panel">
