@@ -12,6 +12,7 @@ const apiMocks = vi.hoisted(() => ({
   createSession: vi.fn(),
   updateSession: vi.fn(),
   importImage: vi.fn(),
+  openImageExternally: vi.fn(),
   updateImage: vi.fn(),
   imageFileUrl: vi.fn((imageId: string) => `/images/${imageId}/file`),
   imageThumbnailUrl: vi.fn((imageId: string) => `/images/${imageId}/thumbnail`),
@@ -40,6 +41,7 @@ describe("App", () => {
     apiMocks.createSession.mockReset();
     apiMocks.updateSession.mockReset();
     apiMocks.importImage.mockReset();
+    apiMocks.openImageExternally.mockReset();
     apiMocks.updateImage.mockReset();
   });
 
@@ -167,8 +169,13 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Showing 1 session\(s\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Showing 1 visit\(s\)/i)).toBeInTheDocument();
     });
+
+    expect(screen.getByText(/These notes stay with the visit/i)).toBeInTheDocument();
+    expect(screen.getByText(/Optional. Leave blank if the exact capture time is unknown/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Imported /i)).toBeInTheDocument();
+    expect(screen.queryByText(/Captured/i)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/History laterality/i), {
       target: { value: "right" },
@@ -178,14 +185,13 @@ describe("App", () => {
     await waitFor(() => {
       expect(apiMocks.fetchPatient).toHaveBeenLastCalledWith("patient-1", {
         laterality: "right",
-        image_type: undefined,
         session_date_from: undefined,
         session_date_to: undefined,
       });
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/No sessions match the active filters/i)).toBeInTheDocument();
+      expect(screen.getByText(/No visits match the active filters/i)).toBeInTheDocument();
     });
   });
 });

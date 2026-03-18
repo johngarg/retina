@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+import platform
+import subprocess
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -184,6 +186,7 @@ def health() -> HealthResponse:
 @app.get("/patients", response_model=list[PatientSummary])
 def list_patients(
     q: str | None = Query(default=None, min_length=1),
+    limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[Patient]:
     stmt = select(Patient).where(Patient.archived_at.is_(None))
@@ -202,7 +205,7 @@ def list_patients(
             token_conditions.append(or_(*conditions))
         if token_conditions:
             stmt = stmt.where(and_(*token_conditions))
-    stmt = stmt.order_by(Patient.last_name.asc(), Patient.first_name.asc())
+    stmt = stmt.order_by(Patient.last_name.asc(), Patient.first_name.asc()).limit(limit)
     return list(db.scalars(stmt))
 
 
@@ -536,6 +539,30 @@ def get_image_file(image_id: str, db: Session = Depends(get_db)) -> FileResponse
     if not path.exists():
         raise HTTPException(status_code=404, detail="Stored image file is missing")
     return FileResponse(path, media_type=image.mime_type, filename=image.original_filename)
+
+
+def open_path_in_default_application(path: Path) -> None:
+    system_name = platform.system().lower()
+    if system_name == "darwin":
+        subprocess.Popen(["open", str(path)])
+        return
+    if system_name == "windows":
+        subprocess.Popen(["cmd", "/c", "start", "", str(path)])
+        return
+    subprocess.Popen(["xdg-open", str(path)])
+
+
+@app.post("/images/{image_id}/open-external", status_code=204)
+def open_image_externally(image_id: str, db: Session = Depends(get_db)) -> None:
+    image = get_image_or_404(db, image_id)
+    path = DATA_DIR / Path(image.storage_relpath)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Stored image file is missing")
+
+    try:
+        open_path_in_default_application(path)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unable to open image externally: {exc}") from exc
 
 
 @app.get("/images/{image_id}/thumbnail")

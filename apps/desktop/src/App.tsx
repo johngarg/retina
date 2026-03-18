@@ -12,6 +12,7 @@ import {
   imageFileUrl,
   imageThumbnailUrl,
   importImage,
+  openImageExternally,
   updateImage,
   updateSession,
 } from "./api";
@@ -33,14 +34,12 @@ type SessionForm = {
 
 type UploadForm = {
   laterality: string;
-  image_type: string;
   notes: string;
   file: File | null;
 };
 
 type ImageEditForm = {
   laterality: string;
-  image_type: string;
   captured_at: string;
   notes: string;
 };
@@ -51,7 +50,6 @@ type SessionFilters = {
   session_date_from: string;
   session_date_to: string;
   laterality: string;
-  image_type: string;
 };
 type BootState = "checking" | "starting" | "ready" | "error";
 type WorkspaceView = "sessions" | "viewer";
@@ -81,7 +79,6 @@ const initialSessionForm = (): SessionForm => ({
 
 const makeUploadForm = (laterality: string): UploadForm => ({
   laterality,
-  image_type: "color_fundus",
   notes: "",
   file: null,
 });
@@ -95,7 +92,6 @@ const initialSessionFilters = (): SessionFilters => ({
   session_date_from: "",
   session_date_to: "",
   laterality: "",
-  image_type: "",
 });
 
 function buildSessionDraft(session: StudySession): SessionForm {
@@ -127,7 +123,6 @@ function toDateTimeLocal(value: string | null): string {
 function buildImageDraft(image: RetinalImage): ImageEditForm {
   return {
     laterality: image.laterality,
-    image_type: image.image_type,
     captured_at: toDateTimeLocal(image.captured_at),
     notes: image.notes ?? "",
   };
@@ -147,6 +142,10 @@ function formatDate(date: string): string {
   return new Date(date).toLocaleDateString();
 }
 
+function formatDateTime(dateTime: string): string {
+  return new Date(dateTime).toLocaleString();
+}
+
 function eyeImages(session: StudySession, eye: EyeSide): RetinalImage[] {
   return session.images.filter((image) => image.laterality === eye);
 }
@@ -164,15 +163,14 @@ function normalizePatientFilters(filters: SessionFilters): PatientFilters {
     session_date_from: filters.session_date_from || undefined,
     session_date_to: filters.session_date_to || undefined,
     laterality: filters.laterality || undefined,
-    image_type: filters.image_type || undefined,
   };
 }
 
 function hasActiveSessionFilters(filters: SessionFilters): boolean {
-  return Boolean(
-    filters.session_date_from || filters.session_date_to || filters.laterality || filters.image_type,
-  );
+  return Boolean(filters.session_date_from || filters.session_date_to || filters.laterality);
 }
+
+const PATIENT_LIST_LIMIT = 100;
 
 function isNetworkApiError(error: unknown): boolean {
   return error instanceof ApiError && error.kind === "network";
@@ -229,7 +227,7 @@ function App() {
   async function refreshPatients(nextQuery = search, preferredPatientId?: string) {
     setPatientListState({ status: "loading", message: null });
     try {
-      const result = await fetchPatients(nextQuery);
+      const result = await fetchPatients(nextQuery, PATIENT_LIST_LIMIT);
       setPatients(result);
       setPatientListState({ status: "ready", message: null });
       setConnectionMessage("Local API connected.");
@@ -391,7 +389,7 @@ function App() {
       const refreshed = await refreshPatient(selectedPatientId);
       if (refreshed) {
         setSessionUploads((current) => ({ ...current, [created.id]: initialEyeUploadForms() }));
-        reportRequestSuccess("Session created.");
+        reportRequestSuccess("Visit created.");
         setWorkspaceView("sessions");
       }
     } catch (err) {
@@ -414,7 +412,7 @@ function App() {
     try {
       await updateSession(sessionId, draft);
       if (await refreshPatient(selectedPatientId, selectedImage?.id ?? null)) {
-        reportRequestSuccess("Session details saved.");
+        reportRequestSuccess("Visit details saved.");
       }
     } catch (err) {
       reportRequestFailure(err, "Unable to update session", "notice");
@@ -431,7 +429,7 @@ function App() {
 
     setNotice(null);
     try {
-      await importImage(sessionId, { ...upload, laterality: eye, file: upload.file });
+      await importImage(sessionId, { laterality: eye, notes: upload.notes, file: upload.file });
       setSessionUploads((current) => ({
         ...current,
         [sessionId]: {
@@ -463,7 +461,6 @@ function App() {
     try {
       await updateImage(selectedImage.id, {
         laterality: draft.laterality,
-        image_type: draft.image_type,
         captured_at: draft.captured_at || null,
         notes: draft.notes,
       });
@@ -472,6 +469,20 @@ function App() {
       }
     } catch (err) {
       reportRequestFailure(err, "Unable to update image metadata", "notice");
+    }
+  }
+
+  async function onOpenImageExternally() {
+    if (!selectedImage) {
+      return;
+    }
+
+    setNotice(null);
+    try {
+      await openImageExternally(selectedImage.id);
+      reportRequestSuccess("Opened image in the default viewer.");
+    } catch (err) {
+      reportRequestFailure(err, "Unable to open image in the default viewer", "notice");
     }
   }
 
@@ -504,7 +515,6 @@ function App() {
       [imageId]: {
         ...(current[imageId] ?? {
           laterality: "left",
-          image_type: "color_fundus",
           captured_at: "",
           notes: "",
         }),
@@ -543,7 +553,7 @@ function App() {
     return (
       <div className="startup-shell">
         <section className="startup-card">
-          <p className="eyebrow">Milestone 1</p>
+          <p className="eyebrow">Retina</p>
           <h1>Retina Startup</h1>
           <p>{bootMessage}</p>
           {bootState === "starting" || bootState === "checking" ? (
@@ -554,8 +564,7 @@ function App() {
           </button>
           {!isTauriRuntime() ? (
             <p className="muted">
-              Browser mode still expects the API to be started separately. Tauri mode will start it
-              automatically.
+              If you are running the browser version, start the local API separately before retrying.
             </p>
           ) : null}
         </section>
@@ -575,11 +584,9 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-top">
-          <p className="eyebrow">Local-first retinal workflow</p>
+          <p className="eyebrow">Retina</p>
           <h1>Retina</h1>
-          <p className="muted">
-            Patients, sessions, and bilateral retinal capture flows rebuilt from the legacy app.
-          </p>
+          <p className="muted">Manage patients, visits, and retinal images.</p>
         </div>
 
         <section className="panel">
@@ -602,6 +609,11 @@ function App() {
             }}
           />
           <div className="patient-list">
+            {patients.length >= PATIENT_LIST_LIMIT ? (
+              <p className="muted patient-list-hint">
+                Showing up to {PATIENT_LIST_LIMIT} patients. Search to narrow large lists.
+              </p>
+            ) : null}
             {patientListState.status === "loading" ? <p className="muted">Loading patients...</p> : null}
             {patientListState.status === "error" ? (
               <div className="inline-state">
@@ -642,39 +654,57 @@ function App() {
             <h2>New Patient</h2>
           </div>
           <form className="stack" onSubmit={onCreatePatient}>
-            <input
-              className="text-input"
-              value={patientForm.first_name}
-              placeholder="First name"
-              onChange={(event) => setPatientForm((current) => ({ ...current, first_name: event.target.value }))}
-              required
-            />
-            <input
-              className="text-input"
-              value={patientForm.last_name}
-              placeholder="Last name"
-              onChange={(event) => setPatientForm((current) => ({ ...current, last_name: event.target.value }))}
-              required
-            />
-            <input
-              className="text-input"
-              type="date"
-              value={patientForm.date_of_birth}
-              onChange={(event) =>
-                setPatientForm((current) => ({ ...current, date_of_birth: event.target.value }))
-              }
-              required
-            />
-            <select
-              className="text-input"
-              value={patientForm.gender_text}
-              onChange={(event) => setPatientForm((current) => ({ ...current, gender_text: event.target.value }))}
-            >
-              <option value="F">F</option>
-              <option value="M">M</option>
-              <option value="X">X</option>
-              <option value="">Unspecified</option>
-            </select>
+            <label className="field-group">
+              <span>First name</span>
+              <input
+                className="text-input"
+                value={patientForm.first_name}
+                placeholder="First name"
+                onChange={(event) =>
+                  setPatientForm((current) => ({ ...current, first_name: event.target.value }))
+                }
+                required
+              />
+            </label>
+            <label className="field-group">
+              <span>Last name</span>
+              <input
+                className="text-input"
+                value={patientForm.last_name}
+                placeholder="Last name"
+                onChange={(event) =>
+                  setPatientForm((current) => ({ ...current, last_name: event.target.value }))
+                }
+                required
+              />
+            </label>
+            <label className="field-group">
+              <span>Date of birth</span>
+              <input
+                className="text-input"
+                type="date"
+                value={patientForm.date_of_birth}
+                onChange={(event) =>
+                  setPatientForm((current) => ({ ...current, date_of_birth: event.target.value }))
+                }
+                required
+              />
+            </label>
+            <label className="field-group">
+              <span>Sex / gender</span>
+              <select
+                className="text-input"
+                value={patientForm.gender_text}
+                onChange={(event) =>
+                  setPatientForm((current) => ({ ...current, gender_text: event.target.value }))
+                }
+              >
+                <option value="F">F</option>
+                <option value="M">M</option>
+                <option value="X">X</option>
+                <option value="">Unspecified</option>
+              </select>
+            </label>
             <button className="primary-button" type="submit">
               Create patient
             </button>
@@ -685,11 +715,11 @@ function App() {
       <main className="workspace">
         <div className="workspace-header">
           <div>
-            <p className="eyebrow">Session-centered workflow</p>
+            <p className="eyebrow">Patient record</p>
             <h2>{selectedPatient ? selectedPatient.display_name : "Select a patient"}</h2>
             <p className="muted">
               {selectedPatient
-                ? `DOB ${selectedPatient.date_of_birth}${selectedPatient.gender_text ? ` • ${selectedPatient.gender_text}` : ""} • ${sessionCount} session(s) • ${imageCount} image(s)`
+                ? `DOB ${selectedPatient.date_of_birth}${selectedPatient.gender_text ? ` • ${selectedPatient.gender_text}` : ""} • ${sessionCount} visit(s) • ${imageCount} image(s)`
                 : "Create a patient on the left or choose one from the list."}
             </p>
           </div>
@@ -707,7 +737,7 @@ function App() {
             className={`ghost-button ${workspaceView === "sessions" ? "active-chip" : ""}`}
             onClick={() => setWorkspaceView("sessions")}
           >
-            Session workflow
+            Visits
           </button>
           <button
             type="button"
@@ -721,7 +751,7 @@ function App() {
         <div className="workspace-grid">
           <section className={`panel content-panel ${workspaceView === "viewer" ? "mobile-hidden" : ""}`}>
             <div className="panel-header">
-              <h2>Sessions</h2>
+              <h2>Visits</h2>
             </div>
 
             {selectedPatient ? (
@@ -729,13 +759,11 @@ function App() {
                 <form className="history-filter-form" onSubmit={onApplySessionFilters}>
                   <div className="panel-header">
                     <div>
-                      <h3>History Filters</h3>
-                      <p className="muted">
-                        Narrow the session timeline by date, eye laterality, or capture type.
-                      </p>
+                      <h3 className="section-heading">History Filters</h3>
+                      <p className="muted">Narrow the visit timeline by date or eye side.</p>
                     </div>
                     <span className="session-count">
-                      Showing {sessionCount} session(s) • {imageCount} image(s)
+                      Showing {sessionCount} visit(s) • {imageCount} image(s)
                     </span>
                   </div>
                   <div className="filter-grid">
@@ -789,29 +817,6 @@ function App() {
                         <option value="unknown">Unknown</option>
                       </select>
                     </label>
-                    <label className="field-group">
-                      <span>Image type</span>
-                      <select
-                        className="text-input"
-                        aria-label="History image type"
-                        value={sessionFilters.image_type}
-                        onChange={(event) =>
-                          setSessionFilters((current) => ({
-                            ...current,
-                            image_type: event.target.value,
-                          }))
-                        }
-                      >
-                        <option value="">All image types</option>
-                        <option value="color_fundus">Color fundus</option>
-                        <option value="red_free">Red-free</option>
-                        <option value="fluorescein">Fluorescein</option>
-                        <option value="autofluorescence">Autofluorescence</option>
-                        <option value="oct">OCT</option>
-                        <option value="external_photo">External photo</option>
-                        <option value="other">Other</option>
-                      </select>
-                    </label>
                   </div>
                   <div className="filter-actions">
                     <button className="primary-button" type="submit">
@@ -828,36 +833,57 @@ function App() {
                   </div>
                 </form>
 
+                <div className="section-divider">
+                  <h3 className="section-heading">New Visit</h3>
+                  <p className="muted">Create a visit before importing new retinal images.</p>
+                </div>
+
                 <form className="session-form" onSubmit={onCreateSession}>
-                  <input
-                    className="text-input"
-                    type="date"
-                    value={sessionForm.session_date}
-                    onChange={(event) =>
-                      setSessionForm((current) => ({ ...current, session_date: event.target.value }))
-                    }
-                    required
-                  />
-                  <input
-                    className="text-input"
-                    value={sessionForm.operator_name}
-                    placeholder="Operator name"
-                    onChange={(event) =>
-                      setSessionForm((current) => ({ ...current, operator_name: event.target.value }))
-                    }
-                  />
-                  <textarea
-                    className="text-input text-area"
-                    value={sessionForm.notes}
-                    placeholder="Session notes"
-                    onChange={(event) => setSessionForm((current) => ({ ...current, notes: event.target.value }))}
-                  />
+                  <label className="field-group">
+                    <span>Visit date</span>
+                    <input
+                      className="text-input"
+                      type="date"
+                      value={sessionForm.session_date}
+                      onChange={(event) =>
+                        setSessionForm((current) => ({ ...current, session_date: event.target.value }))
+                      }
+                      required
+                    />
+                  </label>
+                  <label className="field-group">
+                    <span>Operator name</span>
+                    <input
+                      className="text-input"
+                      value={sessionForm.operator_name}
+                      placeholder="Operator name"
+                      onChange={(event) =>
+                        setSessionForm((current) => ({ ...current, operator_name: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="field-group">
+                    <span>Visit notes</span>
+                    <textarea
+                      className="text-input text-area"
+                      value={sessionForm.notes}
+                      placeholder="Visit notes"
+                      onChange={(event) =>
+                        setSessionForm((current) => ({ ...current, notes: event.target.value }))
+                      }
+                    />
+                  </label>
                   <button className="primary-button" type="submit">
-                    Create session
+                    Create visit
                   </button>
                 </form>
 
-                {patientDetailState.status === "loading" ? <p className="muted">Loading sessions...</p> : null}
+                <div className="section-divider">
+                  <h3 className="section-heading">Visit History</h3>
+                  <p className="muted">Review visits, imports, and previous retinal images.</p>
+                </div>
+
+                {patientDetailState.status === "loading" ? <p className="muted">Loading visits...</p> : null}
                 {patientDetailState.status === "error" ? (
                   <div className="inline-state">
                     <p>{patientDetailState.message}</p>
@@ -872,11 +898,11 @@ function App() {
                 ) : null}
                 {patientDetailState.status === "ready" && selectedPatient.sessions.length === 0 ? (
                   <div className="inline-state">
-                    <p>{activeHistoryFilters ? "No sessions match the active filters." : "No sessions yet."}</p>
+                    <p>{activeHistoryFilters ? "No visits match the active filters." : "No visits yet."}</p>
                     <span className="muted">
                       {activeHistoryFilters
                         ? "Clear or adjust the filters to review more of the patient history."
-                        : "Create one to start a bilateral capture session."}
+                        : "Create one to start a bilateral capture workflow."}
                     </span>
                   </div>
                 ) : null}
@@ -903,39 +929,63 @@ function App() {
                           <span className="session-count">{session.images.length} image(s)</span>
                         </div>
 
+                        <div className="subsection-intro">
+                          <h4>Visit details</h4>
+                          <p className="muted">
+                            These notes stay with the visit. Image-specific notes are entered on each eye capture.
+                          </p>
+                        </div>
+
                         <form
                           className="session-metadata-form"
                           onSubmit={(event) => void onSaveSession(event, session.id)}
                         >
                           <div className="session-meta-grid">
-                            <input
-                              className="text-input"
-                              type="date"
-                              value={draft.session_date}
-                              onChange={(event) =>
-                                updateSessionDraft(session.id, { session_date: event.target.value })
-                              }
-                              required
-                            />
-                            <input
-                              className="text-input"
-                              value={draft.operator_name}
-                              placeholder="Operator name"
-                              onChange={(event) =>
-                                updateSessionDraft(session.id, { operator_name: event.target.value })
-                              }
-                            />
+                            <label className="field-group">
+                              <span>Visit date</span>
+                              <input
+                                className="text-input"
+                                type="date"
+                                value={draft.session_date}
+                                onChange={(event) =>
+                                  updateSessionDraft(session.id, { session_date: event.target.value })
+                                }
+                                required
+                              />
+                            </label>
+                            <label className="field-group">
+                              <span>Operator name</span>
+                              <input
+                                className="text-input"
+                                value={draft.operator_name}
+                                placeholder="Operator name"
+                                onChange={(event) =>
+                                  updateSessionDraft(session.id, { operator_name: event.target.value })
+                                }
+                              />
+                            </label>
                           </div>
-                          <textarea
-                            className="text-input text-area"
-                            value={draft.notes}
-                            placeholder="Session notes"
-                            onChange={(event) => updateSessionDraft(session.id, { notes: event.target.value })}
-                          />
+                          <label className="field-group">
+                            <span>Visit notes</span>
+                            <textarea
+                              className="text-input text-area"
+                              value={draft.notes}
+                              placeholder="Visit notes"
+                              onChange={(event) => updateSessionDraft(session.id, { notes: event.target.value })}
+                            />
+                          </label>
                           <button className="ghost-button" type="submit">
-                            Save session details
+                            Save visit details
                           </button>
                         </form>
+
+                        <div className="subsection-intro">
+                          <h4>Eye captures</h4>
+                          <p className="muted">
+                            Notes entered below apply to the imported image, not the overall visit.
+                            Image metadata can be edited in the right-hand panel.
+                          </p>
+                        </div>
 
                         <div className="bilateral-grid">
                           {(["left", "right"] as EyeSide[]).map((eye) => {
@@ -952,27 +1002,17 @@ function App() {
                                   className="upload-form"
                                   onSubmit={(event) => void onImportImage(event, session.id, eye)}
                                 >
-                                  <select
-                                    className="text-input"
-                                    value={eyeUpload.image_type}
-                                    onChange={(event) =>
-                                      updateEyeUpload(session.id, eye, { image_type: event.target.value })
-                                    }
-                                  >
-                                    <option value="color_fundus">Color fundus</option>
-                                    <option value="red_free">Red-free</option>
-                                    <option value="fluorescein">Fluorescein</option>
-                                    <option value="autofluorescence">Autofluorescence</option>
-                                    <option value="other">Other</option>
-                                  </select>
-                                  <textarea
-                                    className="text-input compact-text-area"
-                                    value={eyeUpload.notes}
-                                    placeholder={`${eye === "left" ? "Left" : "Right"} eye notes`}
-                                    onChange={(event) =>
-                                      updateEyeUpload(session.id, eye, { notes: event.target.value })
-                                    }
-                                  />
+                                  <label className="field-group">
+                                    <span>{eye === "left" ? "Left" : "Right"} image notes</span>
+                                    <textarea
+                                      className="text-input compact-text-area"
+                                      value={eyeUpload.notes}
+                                      placeholder={`Notes for the ${eye} eye image`}
+                                      onChange={(event) =>
+                                        updateEyeUpload(session.id, eye, { notes: event.target.value })
+                                      }
+                                    />
+                                  </label>
                                   <input
                                     className="text-input file-input"
                                     type="file"
@@ -1011,7 +1051,6 @@ function App() {
                                       <div className="image-card-body">
                                         <div className="badge-row">
                                           <span className="badge">{image.laterality}</span>
-                                          <span className="badge subtle">{image.image_type}</span>
                                         </div>
                                         <strong>{image.original_filename}</strong>
                                         <span className="muted">{formatBytes(image.file_size_bytes)}</span>
@@ -1049,7 +1088,6 @@ function App() {
                                   <div className="image-card-body">
                                     <div className="badge-row">
                                       <span className="badge">{image.laterality}</span>
-                                      <span className="badge subtle">{image.image_type}</span>
                                     </div>
                                     <strong>{image.original_filename}</strong>
                                   </div>
@@ -1064,7 +1102,7 @@ function App() {
                 </div>
               </>
             ) : (
-              <p className="muted">Select a patient to browse or create sessions.</p>
+              <p className="muted">Select a patient to browse or create visits.</p>
             )}
           </section>
 
@@ -1079,10 +1117,14 @@ function App() {
                   src={imageFileUrl(selectedImage.id)}
                   alt={selectedImage.original_filename}
                 />
+                <div className="viewer-actions">
+                  <button className="ghost-button" type="button" onClick={() => void onOpenImageExternally()}>
+                    Open in default viewer
+                  </button>
+                </div>
                 <div className="viewer-meta">
                   <div className="badge-row">
                     <span className="badge">{selectedImage.laterality}</span>
-                    <span className="badge subtle">{selectedImage.image_type}</span>
                   </div>
                   <h3>{selectedImage.original_filename}</h3>
                   <p className="muted">
@@ -1091,6 +1133,10 @@ function App() {
                       ? ` • ${selectedImage.width_px} × ${selectedImage.height_px}`
                       : ""}
                   </p>
+                  <p className="muted">Imported {formatDateTime(selectedImage.imported_at)}</p>
+                  {selectedImage.captured_at ? (
+                    <p className="muted">Captured {formatDateTime(selectedImage.captured_at)}</p>
+                  ) : null}
                 </div>
 
                 {historyImages.length > 0 ? (
@@ -1122,49 +1168,54 @@ function App() {
                 ) : null}
 
                 <form className="viewer-form" onSubmit={(event) => void onSaveImage(event)}>
-                  <div className="viewer-form-grid">
-                    <select
-                      className="text-input"
-                      value={imageDrafts[selectedImage.id]?.laterality ?? selectedImage.laterality}
-                      onChange={(event) =>
-                        updateImageDraft(selectedImage.id, { laterality: event.target.value })
-                      }
-                    >
-                      <option value="left">Left eye</option>
-                      <option value="right">Right eye</option>
-                      <option value="both">Both</option>
-                      <option value="unknown">Unknown</option>
-                    </select>
-                    <select
-                      className="text-input"
-                      value={imageDrafts[selectedImage.id]?.image_type ?? selectedImage.image_type}
-                      onChange={(event) =>
-                        updateImageDraft(selectedImage.id, { image_type: event.target.value })
-                      }
-                    >
-                      <option value="color_fundus">Color fundus</option>
-                      <option value="red_free">Red-free</option>
-                      <option value="fluorescein">Fluorescein</option>
-                      <option value="autofluorescence">Autofluorescence</option>
-                      <option value="oct">OCT</option>
-                      <option value="external_photo">External photo</option>
-                      <option value="other">Other</option>
-                    </select>
+                  <div className="subsection-intro subsection-intro-tight">
+                    <h4>Selected image metadata</h4>
+                    <p className="muted">
+                      Changes here apply only to the selected image. Visit notes stay in the visit card on the left.
+                    </p>
                   </div>
-                  <input
-                    className="text-input"
-                    type="datetime-local"
-                    value={imageDrafts[selectedImage.id]?.captured_at ?? ""}
-                    onChange={(event) =>
-                      updateImageDraft(selectedImage.id, { captured_at: event.target.value })
-                    }
-                  />
-                  <textarea
-                    className="text-input text-area"
-                    value={imageDrafts[selectedImage.id]?.notes ?? ""}
-                    placeholder="Image notes"
-                    onChange={(event) => updateImageDraft(selectedImage.id, { notes: event.target.value })}
-                  />
+                  <div className="viewer-form-grid viewer-form-grid-single">
+                    <label className="field-group">
+                      <span>Eye side</span>
+                      <select
+                        className="text-input"
+                        value={imageDrafts[selectedImage.id]?.laterality ?? selectedImage.laterality}
+                        onChange={(event) =>
+                          updateImageDraft(selectedImage.id, { laterality: event.target.value })
+                        }
+                      >
+                        <option value="left">Left eye</option>
+                        <option value="right">Right eye</option>
+                        <option value="both">Both</option>
+                        <option value="unknown">Unknown</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label className="field-group">
+                    <span>Capture time</span>
+                    <input
+                      className="text-input"
+                      type="datetime-local"
+                      value={imageDrafts[selectedImage.id]?.captured_at ?? ""}
+                      placeholder=""
+                      onChange={(event) =>
+                        updateImageDraft(selectedImage.id, { captured_at: event.target.value })
+                      }
+                    />
+                    <span className="field-help">
+                      Optional. Leave blank if the exact capture time is unknown. Imported time is shown above separately.
+                    </span>
+                  </label>
+                  <label className="field-group">
+                    <span>Image notes</span>
+                    <textarea
+                      className="text-input text-area"
+                      value={imageDrafts[selectedImage.id]?.notes ?? ""}
+                      placeholder="Notes for this selected image"
+                      onChange={(event) => updateImageDraft(selectedImage.id, { notes: event.target.value })}
+                    />
+                    <span className="field-help">These notes belong to the selected image, not the whole visit.</span>
+                  </label>
                   <button className="primary-button" type="submit">
                     Save image metadata
                   </button>

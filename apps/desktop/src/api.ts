@@ -24,7 +24,6 @@ export type PatientFilters = {
   session_date_from?: string;
   session_date_to?: string;
   laterality?: string;
-  image_type?: string;
 };
 
 export class ApiError extends Error {
@@ -161,8 +160,8 @@ export function describeApiError(error: unknown, action: string): string {
   return apiError.detail || action;
 }
 
-export async function fetchPatients(query = ""): Promise<PatientSummary[]> {
-  const search = buildQueryString({ q: query });
+export async function fetchPatients(query = "", limit = 100): Promise<PatientSummary[]> {
+  const search = buildQueryString({ q: query, limit: String(limit) });
   return request<PatientSummary[]>(`/patients${search}`);
 }
 
@@ -226,14 +225,12 @@ export async function importImage(
   sessionId: string,
   input: {
     laterality: string;
-    image_type: string;
     notes?: string;
     file: File;
   },
 ): Promise<void> {
   const body = new FormData();
   body.append("laterality", input.laterality);
-  body.append("image_type", input.image_type);
   body.append("notes", input.notes ?? "");
   body.append("file", input.file);
 
@@ -248,7 +245,6 @@ export async function updateImage(
   imageId: string,
   input: {
     laterality: string;
-    image_type: string;
     notes?: string;
     captured_at?: string | null;
   },
@@ -284,6 +280,13 @@ export async function fetchHealth(): Promise<HealthCheckResult> {
   } catch (error) {
     return { ok: false, error: buildRequestError(error) };
   }
+}
+
+export async function openImageExternally(imageId: string): Promise<void> {
+  await request<void>(`/images/${imageId}/open-external`, {
+    method: "POST",
+    expectJson: false,
+  });
 }
 
 export function imageFileUrl(imageId: string): string {

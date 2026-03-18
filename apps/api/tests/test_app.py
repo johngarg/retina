@@ -29,6 +29,7 @@ from app.legacy_import import (
     parse_legacy_dob,
     parse_legacy_visit_timestamp,
 )
+from app import main as main_module
 from app.main import app
 from app.models import AuditEvent, Patient, RetinalImage, StudySession
 
@@ -241,6 +242,10 @@ def test_patient_search_matches_first_last_tokens_and_legacy_id() -> None:
     assert response.status_code == 200
     assert any(result["id"] == patient["id"] for result in response.json())
 
+    response = client.get("/patients", params={"limit": 1})
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
 
 def test_patient_detail_filters_sessions_and_images() -> None:
     patient = create_patient()
@@ -283,6 +288,24 @@ def test_invalid_patient_filter_is_rejected() -> None:
     response = client.get(f"/patients/{patient['id']}", params={"laterality": "temporal"})
     assert response.status_code == 400
     assert "laterality" in response.json()["detail"]
+
+
+def test_open_image_externally_endpoint_uses_default_application(monkeypatch) -> None:
+    patient = create_patient()
+    session_obj = create_session(patient["id"])
+    image = import_test_image(session_obj["id"], laterality="left")
+
+    opened_paths: list[str] = []
+
+    def fake_open(path: Path) -> None:
+        opened_paths.append(str(path))
+
+    monkeypatch.setattr(main_module, "open_path_in_default_application", fake_open)
+
+    response = client.post(f"/images/{image['id']}/open-external")
+    assert response.status_code == 204
+    assert opened_paths
+    assert image["stored_filename"] in opened_paths[0]
 
 
 def test_invalid_laterality_is_rejected() -> None:

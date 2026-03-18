@@ -1,53 +1,103 @@
-# Retina Rewrite
+# Retina
 
-Modern rewrite of the legacy retinal camera workflow app.
+Retina is a local-first desktop app for managing retinal-image patient records, visits, and imported eye images. 
 
-## Repository layout
+This is a modern rewrite of an older retinal workflow prototype, with the current focus on a maintainable local desktop app.
 
-- `retina-racket/`: small early prototype
-- `retina-racket-full/`: fuller legacy Racket app plus sample database and assets
-- `docs/`: legacy assessment, domain model, architecture, and migration plan
-- `apps/api/`: FastAPI backend for local-first persistence and image import
-- `apps/desktop/`: React desktop UI scaffolded for Tauri packaging
+The rewrite uses:
+
+- `apps/desktop`: React + Tauri desktop app
+- `apps/api`: FastAPI local backend
+- SQLite + managed filesystem storage for images and thumbnails
 
 ## Current status
 
-The repository now contains:
+The app currently supports:
 
-- reverse-engineered legacy documentation
-- a new SQLite-backed FastAPI service
-- thumbnail-backed image import, browsing, and integrity scanning
-- audit logging for create/edit/import/backup operations
-- a React UI for patient creation, session creation, image import, browsing, and viewing
-- a Tauri shell scaffold under `apps/desktop/src-tauri`
+- creating and searching patients
+- creating visits
+- importing left/right retinal images from the filesystem
+- viewing thumbnails and full-resolution images
+- editing visit notes and image metadata
+- legacy data import
+- local backup export
+- audit logging for core create/edit/import/backup actions
 
-## Legacy findings
+This is already usable as a developer-run prototype. It now has a defined packaging path for macOS and Windows, but code signing, notarization, and clean-machine installer validation still need to be completed before broad lay-person distribution.
 
-The legacy app stores:
+## Goal: installable by a lay-person user
 
-- patients in SQLite
-- one image-like "visit" row per import
-- note text in separate `.txt` files
-- images in a managed local folder
+The target is that someone like your mum can install and run it without needing Python, Node, Rust, or terminal commands.
 
-Important legacy gaps:
+That means the project still needs:
 
-- no structured left/right eye field
-- no true multi-image session model
-- weak DB constraints
-- missing/orphaned sample assets
-- macOS-specific image opening
+- reliable packaged desktop builds for both macOS and Windows
+- Windows packaging validation
+- polished macOS app/distribution flow
+- installer-level testing on clean machines
+- user-facing installation instructions
+- likely code signing, and on macOS probably notarization, before broad real-world distribution
 
-See:
+The current release path is:
 
-- `docs/legacy-assessment.md`
-- `docs/domain-model.md`
-- `docs/architecture.md`
-- `docs/migration-plan.md`
+- macOS builds produce `Retina.app`, which can be zipped for distribution
+- Windows builds produce an NSIS installer `.exe`
+- the Python backend is bundled as a sidecar inside the desktop build
+- the app runs locally and stores its own data
 
-## Running the prototype
+## Installation
 
-### API
+### macOS
+
+1. Download the latest macOS release artifact:
+   - `Retina.app.zip` for the simplest install path
+   - or a `.dmg` if a DMG release is provided
+2. If you downloaded `Retina.app.zip`, unzip it.
+3. Move `Retina.app` into `Applications`.
+4. Open `Applications` and launch Retina.
+
+If the app is not yet signed and notarized, macOS may warn that the app is from an unidentified developer. That is expected for pre-release or internal builds.
+
+### Windows
+
+1. Download the latest Windows installer:
+   - `Retina Setup ... .exe`
+2. Run the installer.
+3. Follow the installer prompts.
+4. Launch Retina from the Start menu or desktop shortcut.
+
+If the app is not yet code-signed, Windows SmartScreen may warn before launch. That is expected for pre-release or internal builds.
+
+### What users do not need to install
+
+Users should not need to install:
+
+- Python
+- Node.js
+- Rust
+- SQLite
+
+Those are only needed by developers building the app from source.
+
+## Repository layout
+
+- `docs/`: legacy assessment, domain model, architecture, migration plan, implementation plan
+- `apps/api/`: FastAPI backend, migrations, import/export tooling, tests
+- `apps/desktop/`: React/Tauri desktop app
+
+## Running the app in development
+
+### Recommended: Tauri desktop dev mode
+
+```bash
+cd apps/desktop
+npm install
+npm run tauri dev
+```
+
+This is the best current way to try the app because the desktop shell starts the backend automatically.
+
+### Browser-only UI
 
 ```bash
 cd apps/api
@@ -55,7 +105,67 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
-The API stores development data in `apps/api/data/`.
+In another terminal:
+
+```bash
+cd apps/desktop
+npm install
+npm run dev
+```
+
+Browser mode is still useful for frontend development, but it expects the API to be started separately.
+
+## Packaging
+
+### macOS
+
+Typical release build:
+
+```bash
+cd apps/desktop
+npm install
+npm run build:desktop:macos
+```
+
+Artifacts:
+
+- `apps/desktop/src-tauri/target/release/bundle/macos/Retina.app`
+
+Optional DMG build:
+
+```bash
+cd apps/desktop
+npm run build:desktop:macos:dmg
+```
+
+### Windows
+
+Run on a Windows machine:
+
+```powershell
+cd apps\desktop
+npm install
+npm run build:desktop:windows
+```
+
+Artifact:
+
+- `apps/desktop/src-tauri/target/release/bundle/nsis/*.exe`
+
+### CI packaging
+
+GitHub Actions now builds desktop bundles on both macOS and Windows via `.github/workflows/build-desktop.yml`. This is the main automated packaging validation path for Windows until installer testing is done on a clean Windows machine.
+
+## Data and operations
+
+The app is local-first:
+
+- the backend binds to localhost only
+- data lives under the app data directory
+- images are copied into managed storage
+- thumbnails are generated on import
+
+Operational tooling currently available:
 
 ### Storage integrity scan
 
@@ -64,8 +174,6 @@ cd apps/api
 uv run python scripts/scan_integrity.py
 ```
 
-This reports missing original files, missing thumbnails, and orphaned files under managed storage.
-
 ### Backup export
 
 ```bash
@@ -73,78 +181,40 @@ cd apps/api
 uv run python scripts/backup_data.py
 ```
 
-This creates a timestamped zip archive under `apps/api/data/backups/` containing:
+This creates a timestamped zip archive containing:
 
 - a consistent snapshot of `app.db`
-- managed original and thumbnail image files
-- a `manifest.json` summary of record and file counts
-
-Backup creation is also recorded in the audit log.
+- managed original image files
+- managed thumbnails
+- `manifest.json`
 
 ### Legacy import
 
 ```bash
 cd apps/api
-uv run python scripts/import_legacy.py ../../retina-racket-full
+uv run python scripts/import_legacy.py /path/to/legacy-export
 ```
 
-The importer:
+The importer preserves legacy identifiers where available and reports missing legacy assets as JSON warnings.
 
-- reads `database_dir/patient_database.db`
-- copies legacy images into managed storage
-- inlines note text when the `.txt` file exists
-- preserves `legacy_patient_id` and `legacy_visit_id`
-- reports missing legacy files and laterality inference warnings as JSON
-- records a summary audit event for the import run
+## Documentation
 
-### Desktop UI
+See:
 
-```bash
-cd apps/desktop
-npm install
-npm run dev
-```
+- `docs/legacy-assessment.md`
+- `docs/domain-model.md`
+- `docs/architecture.md`
+- `docs/migration-plan.md`
+- `docs/implementation-plan.md`
+- `docs/distribution.md`
+- `docs/installer-testing.md`
+- `docs/install.md`
 
-The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
+## Near-term priority
 
-### Tauri desktop dev mode
+The main product priority is to finish the last mile of distribution:
 
-```bash
-cd apps/desktop
-npm install
-npm run tauri dev
-```
-
-In Tauri dev mode, the desktop shell now starts the FastAPI backend automatically from `apps/api/.venv/bin/python`.
-
-### Current runtime note
-
-- browser/Vite mode still expects the API to be started separately
-- Tauri debug/dev mode can now manage backend startup automatically
-- Tauri release builds now bundle a packaged backend sidecar on macOS
-
-### Tauri release build
-
-```bash
-cd apps/desktop
-npm install
-npm run tauri build
-```
-
-The release build now:
-
-- builds the React frontend
-- packages the Python backend into a standalone executable via PyInstaller
-- bundles that executable into the desktop app resources
-- launches the bundled backend sidecar at runtime on macOS release builds
-
-## Tauri note
-
-Tauri debug/dev mode is verified, and macOS release builds now bundle a packaged backend executable. Browser-only mode still expects the API to be started separately.
-
-## Next steps
-
-1. Install dependencies and run the API/UI locally.
-2. Verify the create patient -> create session -> import left/right images workflow.
-3. Add migration tooling for `retina-racket-full/database_dir/patient_database.db`.
-4. Experiment with the core workflow, then decide whether Milestone 10 should focus on release packaging polish or additional clinic workflow detail.
+- clean-machine installer validation on macOS and Windows
+- user-facing install guidance
+- code signing
+- macOS notarization

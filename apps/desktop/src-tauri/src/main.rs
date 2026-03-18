@@ -47,54 +47,71 @@ fn ensure_executable(_path: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(debug_assertions)]
+fn resolve_dev_backend_runtime() -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let api_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../api");
+    let executable_path = if cfg!(target_os = "windows") {
+        api_dir.join(".venv/Scripts/python.exe")
+    } else {
+        api_dir.join(".venv/bin/python")
+    };
+    let data_dir = api_dir.join("data");
+
+    if !executable_path.exists() {
+        return Err(format!(
+            "Expected backend runtime at {}. Run `uv sync --extra dev` in apps/api first.",
+            executable_path.display()
+        ));
+    }
+
+    Ok((executable_path, api_dir, data_dir))
+}
+
+#[cfg(not(debug_assertions))]
+fn resolve_packaged_backend_runtime(
+    app: &tauri::AppHandle,
+) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("Failed to resolve resource directory: {error}"))?;
+    let backend_dir = resource_dir.join("backend");
+    let executable_name = if cfg!(target_os = "windows") {
+        "retina-api.exe"
+    } else {
+        "retina-api"
+    };
+    let executable_path = backend_dir.join(executable_name);
+    let data_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?
+        .join("backend-data");
+
+    if !executable_path.exists() {
+        return Err(format!(
+            "Bundled backend executable is missing at {}.",
+            executable_path.display()
+        ));
+    }
+
+    fs::create_dir_all(&data_dir)
+        .map_err(|error| format!("Failed to create backend data directory: {error}"))?;
+    ensure_executable(&executable_path)?;
+
+    Ok((executable_path, backend_dir, data_dir))
+}
+
 fn resolve_backend_runtime(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
     #[cfg(debug_assertions)]
     {
-        let api_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../api");
-        let executable_path = api_dir.join(".venv/bin/python");
-        let data_dir = api_dir.join("data");
-
-        if !executable_path.exists() {
-            return Err(format!(
-                "Expected backend runtime at {}. Run `uv sync --extra dev` in apps/api first.",
-                executable_path.display()
-            ));
-        }
-
-        return Ok((executable_path, api_dir, data_dir));
+        let _ = app;
+        return resolve_dev_backend_runtime();
     }
 
     #[cfg(not(debug_assertions))]
     {
-        let resource_dir = app
-            .path()
-            .resource_dir()
-            .map_err(|error| format!("Failed to resolve resource directory: {error}"))?;
-        let backend_dir = resource_dir.join("backend");
-        let executable_name = if cfg!(target_os = "windows") {
-            "retina-api.exe"
-        } else {
-            "retina-api"
-        };
-        let executable_path = backend_dir.join(executable_name);
-        let data_dir = app
-            .path()
-            .app_local_data_dir()
-            .map_err(|error| format!("Failed to resolve app data directory: {error}"))?
-            .join("backend-data");
-
-        if !executable_path.exists() {
-            return Err(format!(
-                "Bundled backend executable is missing at {}.",
-                executable_path.display()
-            ));
-        }
-
-        fs::create_dir_all(&data_dir)
-            .map_err(|error| format!("Failed to create backend data directory: {error}"))?;
-        ensure_executable(&executable_path)?;
-
-        Ok((executable_path, backend_dir, data_dir))
+        resolve_packaged_backend_runtime(app)
     }
 }
 

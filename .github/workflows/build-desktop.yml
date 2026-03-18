@@ -1,0 +1,79 @@
+name: Build Desktop
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+jobs:
+  build-desktop:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            bundle_script: build:desktop:macos
+            artifact_name: retina-macos-bundle
+          - os: windows-latest
+            bundle_script: build:desktop:windows
+            artifact_name: retina-windows-bundle
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --extra dev
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Run backend tests
+        working-directory: apps/api
+        run: uv run pytest
+
+      - name: Run frontend tests
+        working-directory: apps/desktop
+        run: npm test
+
+      - name: Build desktop bundle
+        working-directory: apps/desktop
+        run: npm run ${{ matrix.bundle_script }}
+
+      - name: Package macOS app bundle as zip
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop/src-tauri/target/release/bundle/macos
+        run: ditto -c -k --sequesterRsrc --keepParent Retina.app Retina.app.zip
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: apps/desktop/src-tauri/target/release/bundle
+          if-no-files-found: error

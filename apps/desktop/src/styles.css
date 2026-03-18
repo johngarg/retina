@@ -84,6 +84,7 @@ button {
 
 .workspace {
   padding: 1.25rem;
+  min-width: 0;
 }
 
 .sidebar-top h1,
@@ -156,12 +157,18 @@ button {
   position: sticky;
   top: 1.25rem;
   max-height: calc(100vh - 2.5rem);
+  overflow: auto;
 }
 
 .viewer-stack {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.viewer-actions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .viewer-image {
@@ -201,12 +208,16 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.viewer-form-grid-single {
+  grid-template-columns: 1fr;
+}
+
 .bilateral-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .filter-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .text-input {
@@ -253,12 +264,22 @@ button {
   font-weight: 600;
 }
 
+.field-help {
+  font-size: 0.84rem;
+  color: #5d7077;
+}
+
 .patient-list {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
   max-height: 280px;
   overflow: auto;
+  padding: 0.2rem 0.15rem 0.15rem 0;
+}
+
+.patient-list-hint {
+  margin: 0 0 0.2rem;
 }
 
 .patient-card,
@@ -337,6 +358,50 @@ button:disabled {
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
+}
+
+.section-divider {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid rgba(18, 32, 42, 0.08);
+}
+
+.section-divider h3 {
+  margin: 0;
+}
+
+.section-heading {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.subsection-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-top: 0.1rem;
+}
+
+.subsection-intro-tight {
+  padding-top: 0;
+}
+
+.subsection-intro h4 {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font-size: 1rem;
+}
+
+.session-metadata-form {
+  margin-bottom: 0.45rem;
+}
+
+.session-metadata-form > .ghost-button {
+  align-self: flex-start;
 }
 
 .eye-column {

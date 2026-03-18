@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, createPatient, describeApiError, fetchHealth, fetchPatient } from "./api";
+import { ApiError, createPatient, describeApiError, fetchHealth, fetchPatient, fetchPatients } from "./api";
 
 vi.mock("./tauri", () => ({
   isTauriRuntime: () => false,
@@ -85,11 +85,27 @@ describe("api client", () => {
       session_date_from: "2026-03-01",
       session_date_to: "2026-03-31",
       laterality: "left",
-      image_type: "color_fundus",
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/patients/patient-1?session_date_from=2026-03-01&session_date_to=2026-03-31&laterality=left&image_type=color_fundus",
+      "/api/patients/patient-1?session_date_from=2026-03-01&session_date_to=2026-03-31&laterality=left",
+      expect.any(Object),
+    );
+  });
+
+  it("includes the default patient list limit in list requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchPatients();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/patients?limit=100",
       expect.any(Object),
     );
   });
