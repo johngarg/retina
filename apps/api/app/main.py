@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from .audit import log_audit_event
 from .config import DATA_DIR, ensure_app_dirs
 from .constants import IMAGE_TYPE_VALUES, LATERALITY_VALUES
 from .database import SessionLocal, get_db
@@ -235,6 +236,20 @@ def create_patient(payload: PatientCreate, db: Session = Depends(get_db)) -> Pat
         gender_text=gender_text,
     )
     db.add(patient)
+    db.flush()
+    log_audit_event(
+        db,
+        action="patient_created",
+        entity_type="patient",
+        entity_id=patient.id,
+        patient_id=patient.id,
+        source="api",
+        summary=f"Created patient {patient.display_name}",
+        payload={
+            "date_of_birth": payload.date_of_birth.isoformat(),
+            "gender_text": gender_text,
+        },
+    )
     db.commit()
     db.refresh(patient)
     return patient
@@ -315,6 +330,22 @@ def create_session(
         source="filesystem_import",
     )
     db.add(session_obj)
+    db.flush()
+    log_audit_event(
+        db,
+        action="session_created",
+        entity_type="session",
+        entity_id=session_obj.id,
+        patient_id=patient.id,
+        session_id=session_obj.id,
+        source="api",
+        actor_name=session_obj.operator_name,
+        summary=f"Created session for {patient.display_name} on {session_obj.session_date.isoformat()}",
+        payload={
+            "session_date": session_obj.session_date.isoformat(),
+            "captured_at": session_obj.captured_at.isoformat() if session_obj.captured_at else None,
+        },
+    )
     db.commit()
     db.refresh(session_obj)
     return session_obj
@@ -344,6 +375,18 @@ def update_session(
     if "notes" in payload.model_fields_set:
         session_obj.notes = payload.notes
 
+    log_audit_event(
+        db,
+        action="session_updated",
+        entity_type="session",
+        entity_id=session_obj.id,
+        patient_id=session_obj.patient_id,
+        session_id=session_obj.id,
+        source="api",
+        actor_name=session_obj.operator_name,
+        summary=f"Updated session {session_obj.id}",
+        payload={field: getattr(session_obj, field) for field in sorted(payload.model_fields_set)},
+    )
     db.commit()
     db.refresh(session_obj)
     return session_obj
@@ -410,6 +453,24 @@ def import_image(
         )
         session_obj.status = "completed"
         db.add(image)
+        db.flush()
+        log_audit_event(
+            db,
+            action="image_imported",
+            entity_type="image",
+            entity_id=image.id,
+            patient_id=session_obj.patient_id,
+            session_id=session_obj.id,
+            image_id=image.id,
+            source="api",
+            actor_name=session_obj.operator_name,
+            summary=f"Imported {image.laterality} {image.image_type} image into session {session_obj.id}",
+            payload={
+                "original_filename": image.original_filename,
+                "laterality": image.laterality,
+                "image_type": image.image_type,
+            },
+        )
         db.commit()
         db.refresh(image)
         return image
@@ -451,6 +512,18 @@ def update_image(
     if "notes" in payload.model_fields_set:
         image.notes = payload.notes
 
+    log_audit_event(
+        db,
+        action="image_updated",
+        entity_type="image",
+        entity_id=image.id,
+        patient_id=image.patient_id,
+        session_id=image.session_id,
+        image_id=image.id,
+        source="api",
+        summary=f"Updated image {image.id}",
+        payload={field: getattr(image, field) for field in sorted(payload.model_fields_set)},
+    )
     db.commit()
     db.refresh(image)
     return image

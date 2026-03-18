@@ -17,6 +17,7 @@ The repository now contains:
 - reverse-engineered legacy documentation
 - a new SQLite-backed FastAPI service
 - thumbnail-backed image import, browsing, and integrity scanning
+- audit logging for create/edit/import/backup operations
 - a React UI for patient creation, session creation, image import, browsing, and viewing
 - a Tauri shell scaffold under `apps/desktop/src-tauri`
 
@@ -65,6 +66,21 @@ uv run python scripts/scan_integrity.py
 
 This reports missing original files, missing thumbnails, and orphaned files under managed storage.
 
+### Backup export
+
+```bash
+cd apps/api
+uv run python scripts/backup_data.py
+```
+
+This creates a timestamped zip archive under `apps/api/data/backups/` containing:
+
+- a consistent snapshot of `app.db`
+- managed original and thumbnail image files
+- a `manifest.json` summary of record and file counts
+
+Backup creation is also recorded in the audit log.
+
 ### Legacy import
 
 ```bash
@@ -79,6 +95,7 @@ The importer:
 - inlines note text when the `.txt` file exists
 - preserves `legacy_patient_id` and `legacy_visit_id`
 - reports missing legacy files and laterality inference warnings as JSON
+- records a summary audit event for the import run
 
 ### Desktop UI
 
@@ -130,4 +147,4 @@ Tauri debug/dev mode is verified, and macOS release builds now bundle a packaged
 1. Install dependencies and run the API/UI locally.
 2. Verify the create patient -> create session -> import left/right images workflow.
 3. Add migration tooling for `retina-racket-full/database_dir/patient_database.db`.
-4. Add automated tests and backup/export tooling.
+4. Experiment with the core workflow, then decide whether Milestone 10 should focus on release packaging polish or additional clinic workflow detail.

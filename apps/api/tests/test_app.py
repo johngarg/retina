@@ -1,6 +1,7 @@
 import base64
 import os
 import sqlite3
+import zipfile
 from datetime import date
 from io import BytesIO
 from itertools import count
@@ -18,6 +19,7 @@ if TEST_DATA_DIR.exists():
 
 from fastapi.testclient import TestClient
 
+from app.backup import create_backup_archive
 from app.config import DATA_DIR
 from app.database import SessionLocal
 from app.integrity import scan_storage_integrity
@@ -28,7 +30,7 @@ from app.legacy_import import (
     parse_legacy_visit_timestamp,
 )
 from app.main import app
-from app.models import Patient, RetinalImage, StudySession
+from app.models import AuditEvent, Patient, RetinalImage, StudySession
 
 
 client = TestClient(app)
@@ -100,16 +102,19 @@ def test_database_bootstraps_with_alembic_version() -> None:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
         columns = connection.execute("PRAGMA table_info(retinal_images)").fetchall()
         session_columns = connection.execute("PRAGMA table_info(study_sessions)").fetchall()
+        audit_columns = connection.execute("PRAGMA table_info(audit_events)").fetchall()
     finally:
         connection.close()
 
-    assert version == ("20260318_0003",)
+    assert version == ("20260318_0004",)
     assert any(column[1] == "width_px" for column in columns)
     assert any(column[1] == "height_px" for column in columns)
     assert any(column[1] == "thumbnail_relpath" for column in columns)
     assert any(column[1] == "thumbnail_width_px" for column in columns)
     assert any(column[1] == "thumbnail_height_px" for column in columns)
     assert any(column[1] == "legacy_visit_id" for column in session_columns)
+    assert any(column[1] == "action" for column in audit_columns)
+    assert any(column[1] == "summary" for column in audit_columns)
 
 
 def test_patient_session_and_image_flow() -> None:
@@ -333,6 +338,71 @@ def test_integrity_scan_reports_missing_and_orphaned_files() -> None:
     assert result.missing_originals[0].image_id == image["id"]
     assert len(result.orphaned_thumbnails) == 1
     assert result.orphaned_thumbnails[0].path.endswith("orphan.png")
+
+
+def test_audit_events_created_for_core_workflow() -> None:
+    patient = create_patient()
+    session_obj = create_session(patient["id"])
+    image = import_test_image(session_obj["id"], laterality="left", notes="Audit left eye")
+
+    response = client.patch(
+        f"/sessions/{session_obj['id']}",
+        json={"operator_name": "Operator Audit", "notes": "Updated session"},
+    )
+    assert response.status_code == 200
+
+    response = client.patch(
+        f"/images/{image['id']}",
+        json={"image_type": "red_free", "notes": "Updated image"},
+    )
+    assert response.status_code == 200
+
+    with SessionLocal() as session:
+        events = list(session.query(AuditEvent).order_by(AuditEvent.occurred_at.asc()))
+
+    actions = [event.action for event in events[-5:]]
+    assert actions == [
+        "patient_created",
+        "session_created",
+        "image_imported",
+        "session_updated",
+        "image_updated",
+    ]
+    assert events[-5].patient_id == patient["id"]
+    assert events[-4].session_id == session_obj["id"]
+    assert events[-3].image_id == image["id"]
+
+
+def test_backup_archive_contains_database_manifest_and_images() -> None:
+    patient = create_patient()
+    session_obj = create_session(patient["id"])
+    image = import_test_image(session_obj["id"], laterality="left")
+
+    with SessionLocal() as session:
+        result = create_backup_archive(session)
+
+    archive_path = Path(result.archive_path)
+    assert archive_path.exists()
+    assert archive_path.suffix == ".zip"
+    assert result.images >= 1
+    assert result.original_files >= 1
+    assert result.thumbnail_files >= 1
+
+    with zipfile.ZipFile(archive_path) as archive:
+        names = set(archive.namelist())
+        assert "app.db" in names
+        assert "manifest.json" in names
+        assert image["storage_relpath"] in names
+        assert image["thumbnail_relpath"] in names
+        manifest = archive.read("manifest.json").decode("utf-8")
+        assert '"patients":' in manifest
+        assert '"images":' in manifest
+
+    with SessionLocal() as session:
+        latest_backup_event = session.query(AuditEvent).order_by(AuditEvent.occurred_at.desc()).first()
+
+    assert latest_backup_event is not None
+    assert latest_backup_event.action == "backup_created"
 
 
 def build_legacy_fixture(root: Path) -> Path:

@@ -6,7 +6,15 @@ from uuid import uuid4
 from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .constants import IMAGE_TYPE_VALUES, LATERALITY_VALUES, SESSION_SOURCE_VALUES, SESSION_STATUS_VALUES
+from .constants import (
+    AUDIT_ACTION_VALUES,
+    AUDIT_ENTITY_VALUES,
+    AUDIT_SOURCE_VALUES,
+    IMAGE_TYPE_VALUES,
+    LATERALITY_VALUES,
+    SESSION_SOURCE_VALUES,
+    SESSION_STATUS_VALUES,
+)
 from .database import Base
 
 
@@ -122,3 +130,44 @@ class RetinalImage(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     session: Mapped[StudySession] = relationship(back_populates="images")
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        CheckConstraint(
+            f"action IN {AUDIT_ACTION_VALUES}",
+            name="ck_audit_events_action",
+        ),
+        CheckConstraint(
+            f"entity_type IN {AUDIT_ENTITY_VALUES}",
+            name="ck_audit_events_entity_type",
+        ),
+        CheckConstraint(
+            f"source IN {AUDIT_SOURCE_VALUES}",
+            name="ck_audit_events_source",
+        ),
+        Index("ix_audit_events_occurred_at", "occurred_at"),
+        Index("ix_audit_events_patient_occurred_at", "patient_id", "occurred_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    action: Mapped[str] = mapped_column(String(32))
+    entity_type: Mapped[str] = mapped_column(String(32))
+    entity_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    patient_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("patients.id"), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("study_sessions.id"),
+        nullable=True,
+    )
+    image_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("retinal_images.id"),
+        nullable=True,
+    )
+    source: Mapped[str] = mapped_column(String(32))
+    actor_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    summary: Mapped[str] = mapped_column(Text)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)

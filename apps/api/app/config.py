@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from .constants import IMAGE_ORIGINAL_ROOT, IMAGE_THUMBNAIL_ROOT
+from .constants import BACKUP_ROOT, IMAGE_ORIGINAL_ROOT, IMAGE_THUMBNAIL_ROOT
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -10,9 +10,11 @@ DB_PATH = DATA_DIR / "app.db"
 IMAGE_ROOT = DATA_DIR / "images"
 IMAGE_ORIGINALS_DIR = DATA_DIR / IMAGE_ORIGINAL_ROOT
 IMAGE_THUMBNAILS_DIR = DATA_DIR / IMAGE_THUMBNAIL_ROOT
+BACKUPS_DIR = DATA_DIR / BACKUP_ROOT
 
 
 def ensure_app_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     IMAGE_ORIGINALS_DIR.mkdir(parents=True, exist_ok=True)
     IMAGE_THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+    BACKUPS_DIR.mkdir(parents=True, exist_ok=True)

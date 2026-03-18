@@ -10,6 +10,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .audit import log_audit_event
 from .models import Patient, RetinalImage, StudySession, utc_now
 from .storage import StorageValidationError, normalize_name, normalize_upper, store_file_path
 
@@ -361,5 +362,17 @@ def import_legacy_dataset(legacy_root: Path, db: Session) -> LegacyImportReport:
                     detail="Legacy visit was archived.",
                 )
 
+    log_audit_event(
+        db,
+        action="legacy_import_completed",
+        entity_type="system",
+        entity_id=str(database_path),
+        source="legacy_import",
+        summary=(
+            f"Imported legacy dataset from {legacy_root.name}: "
+            f"{report.patients_created} patients, {report.sessions_created} sessions, {report.images_imported} images created"
+        ),
+        payload=report.to_dict(),
+    )
     db.commit()
     return report
