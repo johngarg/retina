@@ -2,6 +2,7 @@
 
 use std::{
     fs,
+    fs::OpenOptions,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -19,6 +20,30 @@ struct BackendStartResult {
     status: String,
     detail: String,
     mode: String,
+}
+
+fn prepare_backend_logs(data_dir: &PathBuf) -> Result<(PathBuf, PathBuf), String> {
+    let logs_dir = data_dir.join("logs");
+    fs::create_dir_all(&logs_dir)
+        .map_err(|error| format!("Failed to create backend logs directory: {error}"))?;
+
+    let stdout_log = logs_dir.join("backend.stdout.log");
+    let stderr_log = logs_dir.join("backend.stderr.log");
+
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&stdout_log)
+        .map_err(|error| format!("Failed to create backend stdout log: {error}"))?;
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&stderr_log)
+        .map_err(|error| format!("Failed to create backend stderr log: {error}"))?;
+
+    Ok((stdout_log, stderr_log))
 }
 
 fn shutdown_backend(state: &BackendState) {
@@ -155,6 +180,20 @@ fn ensure_backend_started(
     #[cfg(not(debug_assertions))]
     let mut command = Command::new(&backend_executable);
 
+    let (stdout_log_path, stderr_log_path) = prepare_backend_logs(&data_dir)?;
+    let stdout_log = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&stdout_log_path)
+        .map_err(|error| format!("Failed to open backend stdout log: {error}"))?;
+    let stderr_log = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&stderr_log_path)
+        .map_err(|error| format!("Failed to open backend stderr log: {error}"))?;
+
     let child = command
         .current_dir(backend_workdir)
         .env("RETINA_DATA_DIR", data_dir)
@@ -163,8 +202,8 @@ fn ensure_backend_started(
         .arg("127.0.0.1")
         .arg("--port")
         .arg("8000")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log))
         .spawn()
         .map_err(|error| format!("Failed to launch backend process: {error}"))?;
 
@@ -172,7 +211,11 @@ fn ensure_backend_started(
 
     Ok(BackendStartResult {
         status: "started".into(),
-        detail: "Started the local API process.".into(),
+        detail: format!(
+            "Started the local API process. Logs: stdout={}, stderr={}",
+            stdout_log_path.display(),
+            stderr_log_path.display()
+        ),
         mode: if cfg!(debug_assertions) {
             "dev".into()
         } else {

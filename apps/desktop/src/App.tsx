@@ -290,6 +290,7 @@ function App() {
     setBootMessage("Checking backend availability...");
     setNotice(null);
     setConnectionMessage("Checking local API availability...");
+    let startupDetail: string | null = null;
 
     const health = await fetchHealth();
     if (health.ok) {
@@ -304,6 +305,7 @@ function App() {
       setBootMessage("Starting the local API...");
       try {
         const result = await ensureBackendStarted();
+        startupDetail = result.detail;
         setBootMessage(result.detail);
       } catch (err) {
         setBootState("error");
@@ -322,10 +324,15 @@ function App() {
       return;
     }
 
-    const isHealthy = await waitForBackendHealth(async () => (await fetchHealth()).ok, 40, 500);
+    const healthAttempts = isTauriRuntime() ? 120 : 40;
+    const isHealthy = await waitForBackendHealth(async () => (await fetchHealth()).ok, healthAttempts, 500);
     if (!isHealthy) {
       setBootState("error");
-      setBootMessage("Backend did not become healthy in time. Check the desktop logs and retry.");
+      setBootMessage(
+        startupDetail
+          ? `Backend did not become healthy in time. ${startupDetail}`
+          : "Backend did not become healthy in time. Check the desktop logs and retry.",
+      );
       setConnectionMessage("Local API startup timed out.");
       return;
     }
