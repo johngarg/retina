@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import zipfile
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,8 +63,8 @@ def create_backup_archive(db: Session, *, actor_name: str | None = None) -> Back
         snapshot_db_path = temp_root / "app.db"
         manifest_path = temp_root / "manifest.json"
 
-        with sqlite3.connect(DB_PATH) as source_connection:
-            with sqlite3.connect(snapshot_db_path) as snapshot_connection:
+        with closing(sqlite3.connect(DB_PATH)) as source_connection:
+            with closing(sqlite3.connect(snapshot_db_path)) as snapshot_connection:
                 source_connection.backup(snapshot_connection)
 
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")

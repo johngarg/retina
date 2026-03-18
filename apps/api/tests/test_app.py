@@ -18,10 +18,11 @@ if TEST_DATA_DIR.exists():
             path.rmdir()
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import close_all_sessions
 
 from app.backup import create_backup_archive
 from app.config import DATA_DIR
-from app.database import SessionLocal
+from app.database import SessionLocal, engine
 from app.integrity import scan_storage_integrity
 from app.legacy_import import (
     import_legacy_dataset,
@@ -542,6 +543,10 @@ def test_legacy_import_reports_missing_assets_and_is_idempotent() -> None:
 
 
 def teardown_module() -> None:
+    client.close()
+    close_all_sessions()
+    engine.dispose()
+
     if DATA_DIR.exists():
         for path in sorted(DATA_DIR.rglob("*"), reverse=True):
             if path.is_file():
