@@ -12,6 +12,10 @@ The rewrite uses:
 
 Please see the [user manual](user_manual.md) for details on how to use the app.
 
+![](docs/image-1.png)
+
+![](docs/image-2.png)
+
 ## Current status
 
 The app currently supports:
